@@ -1,0 +1,9 @@
+{
+  "name": "backup-suite",
+  "version": "1.0.0",
+  "dependencies": [
+    {
+      "name": "gtest"
+    }
+  ]
+}
