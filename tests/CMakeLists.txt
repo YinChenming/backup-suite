@@ -18,5 +18,9 @@ target_link_libraries(core_tests PRIVATE backup_suite_core
         GTest::gtest_main
 )
 
+if (WIN32)
+    target_link_libraries(core_tests PRIVATE Shell32.lib)
+endif ()
+
 include(GoogleTest)
 gtest_discover_tests(core_tests)

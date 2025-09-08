@@ -19,8 +19,8 @@
 static_assert(false, "Unsupported platform");
 #endif
 
+#include "../utils/time_converter.h"
 #include "device.h"
-#include "utils/time_converter.h"
 
 
 #ifdef _WIN32

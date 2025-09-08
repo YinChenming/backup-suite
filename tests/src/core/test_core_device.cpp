@@ -5,8 +5,14 @@
 #include <bitset>
 #include <gtest/gtest.h>
 
-#include "device.h"
-#include "system_device.h"
+#ifdef _WIN32
+#include <windows.h>
+#elif defined __linux__
+#include <sys/stat.h>
+#endif
+
+#include "filesystem/device.h"
+#include "filesystem/system_device.h"
 
 std::string get_file_type_name(const FileEntityType type)
 {
@@ -85,126 +91,247 @@ void print_folder(Folder& folder, std::ostream& os = std::cout)
     }
 }
 
-TEST(TestSystemDevice, BasicAssertions) {
+bool run_script_as_admin(const std::filesystem::path& script_path)
+{
 #ifdef _WIN32
-    const auto current_path = std::filesystem::current_path() / "test";
-    const std::filesystem::path test_folder_path = "test_folder";
-    GTEST_LOG_(INFO) << "Current path: " << current_path << "\n";
-    if (std::filesystem::exists(current_path))
-    {
-        std::filesystem::remove_all(current_path);
-    }
-    std::filesystem::create_directory(current_path);
-    auto device = WindowsDevice(current_path );
-    std::filesystem::create_directory(current_path / test_folder_path);
+    const std::wstring interpreter = L"C:\\Windows\\System32\\cmd.exe";
+    const std::wstring params = L"/C \"" + script_path.wstring() + L"\"";
 
-    auto folder = device.get_folder(test_folder_path);
+    SHELLEXECUTEINFOW sei = { sizeof(sei) };
+
+    // SEE_MASK_NOCLOSEPROGRESS 使 ShellExecuteExW 调用后会返回新进程的句柄供后续使用
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+    sei.hwnd = nullptr;
+    sei.lpVerb = L"runas"; // 以管理员权限运行
+    sei.lpFile = interpreter.c_str(); // 解释器路径
+    sei.lpParameters = params.c_str(); // 脚本路径
+    sei.nShow = SW_SHOWNORMAL;
+
+    if (!ShellExecuteExW(&sei))
+    {
+        const DWORD error = GetLastError();
+        if (error == ERROR_CANCELLED)
+        {
+            GTEST_LOG_(INFO) << "User cancelled the UAC prompt.";
+            return false;
+        }
+        throw std::runtime_error("Failed to execute script as admin. Error code: " + std::to_string(error));
+    }
+
+    WaitForSingleObject(sei.hProcess, INFINITE);
+    CloseHandle(sei.hProcess);
+    return true;
+#elif defined __linux__
+    throw std::runtime_error("Cannot run script as admin on Linux");
+#endif
+}
+
+class TestSystemDevice: public ::testing::Test
+{
+public:
+    inline static const std::filesystem::path root = std::filesystem::current_path() / "test";
+    inline static const std::filesystem::path test_folder = "test_folder";
+    inline static const auto device = SystemDevice(root);
+    inline static bool volatile test_symbolic_link =
+#ifdef _WIN32
+        false;
+#elif __linux__
+            true;
+#endif
+
+protected:
+    static void SetUpSuitCase()
+    {
+        if (std::filesystem::exists(root))
+        {
+            std::filesystem::remove_all(root);
+        }
+        std::filesystem::create_directory(root);
+        std::filesystem::create_directory(root / test_folder);
+
+        // 测试普通文件
+        if (std::ofstream ofs(root / test_folder / "test_file.txt", std::ios::out | std::ios::trunc); ofs.is_open())
+        {
+            ofs << "Hello, World!" << std::endl;
+            ofs.close();
+
+            GTEST_LOG_(INFO) << "create file test_file.txt";
+        } else
+        {
+            GTEST_LOG_(ERROR) << "Failed to open test_file.txt";
+        }
+
+        // 测试隐藏文件
+        if (std::ofstream ofs(root / test_folder / "test_file_hide.txt", std::ios::out | std::ios::trunc); ofs.is_open())
+        {
+            ofs << "Hello, World!(hide)" << std::endl;
+            ofs.close();
+
+            GTEST_LOG_(INFO) << "create file test_file_hide.txt";
+#ifdef _WIN32
+            SetFileAttributesW((root / test_folder / "test_file_hide.txt").wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
+#endif
+        } else
+        {
+            GTEST_LOG_(ERROR) << "Failed to open test_file_hide.txt";
+        }
+
+        // 测试只读文件
+        if (std::ofstream ofs(root / test_folder / "test_file_readonly.txt", std::ios::out | std::ios::trunc); ofs.is_open())
+        {
+            ofs << "Hello, World!(readonly)" << std::endl;
+            ofs.close();
+
+            GTEST_LOG_(INFO) << "create file test_file_readonly.txt";
+#ifdef _WIN32
+            SetFileAttributesW((root / test_folder / "test_file_readonly.txt").wstring().c_str(), FILE_ATTRIBUTE_READONLY);
+#elif defined __linux__
+            chmod((root / test_folder / "test_file_readonly.txt").c_str(), 0444);
+#endif
+        } else
+        {
+            GTEST_LOG_(ERROR) << "Failed to open test_file_readonly.txt";
+        }
+
+        // 测试嵌套文件夹
+        std::filesystem::create_directory(root / test_folder / test_folder);
+
+
+        // 测试符号链接
+#ifdef _WIN32
+        if (std::ofstream ofs(root / "create_sl.bat", std::ios::out | std::ios::trunc); ofs.is_open())
+        {
+            ofs << "@echo off" << std::endl;
+            ofs << "mklink /D \"test_link_folder\" \"" << (root / test_folder).string() << "\"" << std::endl;
+            ofs << "mklink \"test_link_file\" \"" << (root / test_folder / "test_file.txt").string() << "\"" << std::endl;
+            ofs.close();
+            test_symbolic_link = true;
+        } else
+        {
+            test_symbolic_link = false;
+            GTEST_LOG_(ERROR) << "Failed to open create_sl.bat";
+        }
+        if (test_symbolic_link)
+        {
+            try
+            {
+                run_script_as_admin(root / "create_sl.bat");
+                GTEST_LOG_(INFO) << "create symbolic link";
+            } catch (const std::exception& e)
+            {
+                GTEST_LOG_(ERROR) << "Failed to create symbolic link: " << e.what() << "\n";
+                test_symbolic_link = false;
+            }
+            std::filesystem::remove(root / "create_sl.bat");
+        }
+#elif defined __linux__
+#endif
+    }
+
+    static void TearDownSuitCase()
+    {
+        if (std::filesystem::exists(root / test_folder / "test_file_readonly.txt"))
+        {
+#ifdef _WIN32
+            SetFileAttributesW((root / test_folder / "test_file_readonly.txt").wstring().c_str(), FILE_ATTRIBUTE_NORMAL);
+#elif defined __linux__
+            chmod((root / test_folder / "test_file_readonly.txt").c_str(), 0777);
+#endif
+        }
+        try
+        {
+            std::filesystem::remove_all(root);
+        } catch (...)
+        {
+            GTEST_LOG_(ERROR) << "Failed to remove test directory: " << "\n";
+        }
+    }
+};
+
+TEST_F(TestSystemDevice, TestFolder)
+{
+    // test empty folder
+    auto folder = device.get_folder(test_folder / test_folder);
     ASSERT_NE(folder, nullptr);
     EXPECT_EQ(folder->get_children().size(), 0);
-    print_folder(*folder, GTEST_LOG_(INFO) << "Test Empty Folder via get_folder:\n");
+    auto meta = std::make_unique<FileEntityMeta>(folder->get_meta());
+    ASSERT_NE(meta, nullptr);
+    EXPECT_EQ(meta->type, FileEntityType::Directory);
+    print_folder(*folder, GTEST_LOG_(INFO) << "Test Empty Folder:\n");
+
+    // test root folder
+    folder = device.get_folder(test_folder);
+    ASSERT_NE(folder, nullptr);
+    EXPECT_EQ(folder->get_children().size(), 4);
+    meta = std::make_unique<FileEntityMeta>(folder->get_meta());
+    ASSERT_NE(meta, nullptr);
+    EXPECT_EQ(meta->type, FileEntityType::Directory);
+    print_folder(*folder, GTEST_LOG_(INFO) << "Test Root Folder:\n");
+}
 
 
-    // 测试普通文件
-    if (std::ofstream ofs(current_path / test_folder_path / "test_file.txt", std::ios::out | std::ios::trunc); ofs.is_open())
-    {
-        ofs << "Hello, World!" << std::endl;
-        ofs.close();
-
-        GTEST_LOG_(INFO) << "create file test_file.txt";
-    } else
-    {
-        GTEST_LOG_(ERROR) << "Failed to open test_file.txt";
-    }
-
-    auto file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder_path / "test_file.txt").release());
+TEST_F(TestSystemDevice, TestFiles)
+{
+    // test normal file
+    auto file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder / "test_file.txt").release());
     ASSERT_NE(file, nullptr);
     EXPECT_EQ(std::string(std::istreambuf_iterator(file->get_stream()), {}), "Hello, World!\n");
     file->close();
-
     auto meta = std::make_unique<FileEntityMeta>(file->get_meta());
     ASSERT_NE(meta, nullptr);
     EXPECT_EQ(meta->type, FileEntityType::RegularFile);
     print_meta(*meta, GTEST_LOG_(INFO) << "Test Normal File:\n");
 
-
-    // 测试隐藏文件
-    if (std::ofstream ofs(current_path / test_folder_path / "test_file_hide.txt", std::ios::out | std::ios::trunc); ofs.is_open())
-    {
-        ofs << "Hello, World!(hide)" << std::endl;
-        ofs.close();
-
-        GTEST_LOG_(INFO) << "create file test_file_hide.txt";
-    } else
-    {
-        GTEST_LOG_(ERROR) << "Failed to open test_file_hide.txt";
-    }
-    SetFileAttributesW((current_path / test_folder_path / "test_file_hide.txt").wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
-
-    file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder_path / "test_file_hide.txt").release());
+    // test hide file
+    file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder / "test_file_hide.txt").release());
     ASSERT_NE(file, nullptr);
     EXPECT_EQ(std::string(std::istreambuf_iterator(file->get_stream()), {}), "Hello, World!(hide)\n");
     file->close();
-
     meta = std::make_unique<FileEntityMeta>(file->get_meta());
     ASSERT_NE(meta, nullptr);
     EXPECT_EQ(meta->type, FileEntityType::RegularFile);
-    print_meta(*meta, GTEST_LOG_(INFO) << "Test Hide File:\n");
+#ifdef _WIN32
+    EXPECT_TRUE(meta->windows_attributes & FILE_ATTRIBUTE_HIDDEN);
+#endif
+    print_meta(*meta, GTEST_LOG_(INFO) << "Test Hide File"
+#ifdef __linux__
+    << "(Linux does not support hidden attribute)"
+#endif
+    << ":\n");
 
-
-    // 测试只读文件
-    if (std::ofstream ofs(current_path / test_folder_path / "test_file_readonly.txt", std::ios::out | std::ios::trunc); ofs.is_open())
-    {
-        ofs << "Hello, World!(readonly)" << std::endl;
-        ofs.close();
-
-        GTEST_LOG_(INFO) << "create file test_file_readonly.txt";
-    } else
-    {
-        GTEST_LOG_(ERROR) << "Failed to open test_file_readonly.txt";
-    }
-    SetFileAttributesW((current_path / test_folder_path / "test_file_readonly.txt").wstring().c_str(), FILE_ATTRIBUTE_READONLY);
-
-    file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder_path / "test_file_readonly.txt").release());
+    // test readonly file
+    file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder / "test_file_readonly.txt").release());
     ASSERT_NE(file, nullptr);
     EXPECT_EQ(std::string(std::istreambuf_iterator(file->get_stream()), {}), "Hello, World!(readonly)\n");
     file->close();
     meta = std::make_unique<FileEntityMeta>(file->get_meta());
     ASSERT_NE(meta, nullptr);
     EXPECT_EQ(meta->type, FileEntityType::RegularFile);
-    print_meta(*meta, GTEST_LOG_(INFO) << "Test Readonly File:\n");
-
-
-    // 测试嵌套文件夹
-    std::filesystem::create_directory(current_path / test_folder_path / test_folder_path);
-    folder = device.get_folder(test_folder_path);
-    ASSERT_NE(folder, nullptr);
-    EXPECT_EQ(folder->get_children().size(), 4);
-    print_folder(*folder, GTEST_LOG_(INFO) << "Test Folder via get_folder:\n");
-
-    // test symbolic link
-    if (std::filesystem::exists(current_path / "test_link_folder"))
-    {
-        meta = device.get_meta("test_link_folder");
-        ASSERT_NE(meta, nullptr);
-        EXPECT_EQ(meta->type, FileEntityType::SymbolicLink);
-        print_meta(*meta, GTEST_LOG_(INFO) << "Test Symbolic Link Folder:\n");
-    }
-
-    if (std::filesystem::exists(current_path / "test_link_file"))
-    {
-        meta = device.get_meta("test_link_file");
-        ASSERT_NE(meta, nullptr);
-        EXPECT_EQ(meta->type, FileEntityType::SymbolicLink);
-        print_meta(*meta, GTEST_LOG_(INFO) << "Test Symbolic Link File:\n");
-    }
-
-    try
-    {
-        std::filesystem::remove_all(current_path);
-    } catch (...)
-    {
-        GTEST_LOG_(ERROR) << "Failed to remove test directory: " << "\n";
-    }
-#elif defined __linux__
+#ifdef _WIN32
+    EXPECT_TRUE(meta->windows_attributes & FILE_ATTRIBUTE_READONLY);
 #endif
+    EXPECT_EQ(meta->posix_mode, 0444);
+    print_meta(*meta, GTEST_LOG_(INFO) << "Test Readonly File:\n");
+}
+
+TEST_F(TestSystemDevice, TestSymbolicLink)
+{
+    if (!test_symbolic_link)
+    {
+        GTEST_LOG_(WARNING) << "Test Symbolic Link does not exist.\n";
+        return;
+    }
+
+    auto meta = device.get_meta("test_link_folder");
+    ASSERT_NE(meta, nullptr);
+    EXPECT_EQ(meta->type, FileEntityType::SymbolicLink);
+    print_meta(*meta, GTEST_LOG_(INFO) << "Test Symbolic Link Folder:\n");
+
+
+    meta = device.get_meta("test_link_file");
+    ASSERT_NE(meta, nullptr);
+    EXPECT_EQ(meta->type, FileEntityType::SymbolicLink);
+    print_meta(*meta, GTEST_LOG_(INFO) << "Test Symbolic Link File:\n");
+
+    meta.release();
 }

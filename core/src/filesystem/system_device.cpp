@@ -4,7 +4,7 @@
 
 #include <fstream>
 
-#include "system_device.h"
+#include "../../include/filesystem/system_device.h"
 
 using namespace utils::time_converter;
 
@@ -182,51 +182,6 @@ std::unique_ptr<FileEntityMeta> WindowsDevice::get_meta(const std::filesystem::p
 
             CloseHandle(hFileLink);
         } while (false);
-
-        // 获取符号链接的目标路径
-        // HANDLE hFileLink = INVALID_HANDLE_VALUE;
-        // WIN32_FIND_DATAW ffd;
-        // hFileLink = FindFirstFileW(realpath.wstring().c_str(), &ffd);
-        // if (hFileLink != INVALID_HANDLE_VALUE && ffd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT && ffd.dwReserved0 & IO_REPARSE_TAG_SYMLINK)
-        // {
-        //     meta.type = FileEntityType::SymbolicLink;
-        //     FindClose(hFileLink);
-        //     hFileLink = CreateFileW(
-        //         realpath.wstring().c_str(),GENERIC_READ,
-        //         FILE_SHARE_READ,
-        //         nullptr,
-        //         OPEN_EXISTING,
-        //         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, // FILE_FLAG_BACKUP_SEMANTICS 允许打开目录
-        //         // 打开符号链接目标
-        //         nullptr
-        //     );
-        //
-        //     // GetFinalPathNameByHandle获取软链接对应的真实设备路径
-        //     // GetVolumePathName获取卷路径
-        //     WCHAR linkPath[MAX_PATH], tmpPath[MAX_PATH], devicePath[MAX_PATH];
-        //     DWORD dwRet = GetFinalPathNameByHandleW(hFileLink, linkPath, MAX_PATH, FILE_NAME_NORMALIZED | VOLUME_NAME_NT);
-        //     std::wstring linkPathW, tmpPathW, targetPathW;
-        //     if (dwRet < MAX_PATH)
-        //     {
-        //         linkPathW = std::wstring(linkPath, dwRet);
-        //         // 获取盘符
-        //         if (GetVolumePathNameW(linkPath, tmpPath, MAX_PATH))
-        //         {
-        //             tmpPath[2] = L'\0'; // 截断为 "C:", QueryDosDevice不能以'\'结尾
-        //             tmpPathW = std::wstring(tmpPath);
-        //             if (QueryDosDeviceW(tmpPath, devicePath, MAX_PATH))
-        //             {
-        //                 auto devicePathLen = std::wcslen(devicePath);
-        //                 meta.symbolic_link_target = tmpPathW + linkPathW.substr(devicePathLen, linkPathW.length() - devicePathLen);
-        //             }
-        //         }
-        //         CloseHandle(hFileLink);
-        //     }
-        // }else
-        // {
-        //     FindClose(hFileLink);
-        //     meta.symbolic_link_target = L"";
-        // }
     }
 
     // set file mode
