@@ -140,6 +140,14 @@ public:
 #endif
 
 protected:
+    // static void SetUpTestCase()
+    // {
+    //     SetUpSuitCase();
+    // }
+    static void SetUpTestSuite()
+    {
+        SetUpSuitCase();
+    }
     static void SetUpSuitCase()
     {
         if (std::filesystem::exists(root))
@@ -202,8 +210,9 @@ protected:
         if (std::ofstream ofs(root / "create_sl.bat", std::ios::out | std::ios::trunc); ofs.is_open())
         {
             ofs << "@echo off" << std::endl;
-            ofs << "mklink /D \"test_link_folder\" \"" << (root / test_folder).string() << "\"" << std::endl;
-            ofs << "mklink \"test_link_file\" \"" << (root / test_folder / "test_file.txt").string() << "\"" << std::endl;
+            ofs << "cd \"" << root.string() << "\"" << std::endl;
+            ofs << "mklink /D \"" << (root / "test_link_folder").string() << "\" \"" << (root / test_folder).string() << "\"" << std::endl;
+            ofs << "mklink \"" << (root / "test_link_file").string() << "\" \"" << (root / test_folder / "test_file.txt").string() << "\"" << std::endl;
             ofs.close();
             test_symbolic_link = true;
         } else
@@ -228,6 +237,14 @@ protected:
 #endif
     }
 
+    // static void TearDownTestCase()
+    // {
+    //     TearDownSuitCase();
+    // }
+    static void TearDownTestSuite()
+    {
+        TearDownSuitCase();
+    }
     static void TearDownSuitCase()
     {
         if (std::filesystem::exists(root / test_folder / "test_file_readonly.txt"))
