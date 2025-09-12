@@ -10,9 +10,8 @@ using namespace utils::time_converter;
 
 #ifdef _WIN32
 
-std::unique_ptr<Folder> WindowsDevice::get_folder(const std::filesystem::path& path) const
+std::unique_ptr<Folder> WindowsDevice::get_folder(const std::filesystem::path& path, bool recursion) const
 {
-    // throw std::runtime_error("Not implemented");
     const std::unique_ptr<FileEntityMeta> meta = get_meta(path);
     if (!meta || meta->type != FileEntityType::Directory)
     {
@@ -35,12 +34,15 @@ std::unique_ptr<Folder> WindowsDevice::get_folder(const std::filesystem::path& p
         }
         if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
         {
-            children.push_back(*get_folder(path / ffd.cFileName));
+            if (recursion)
+                children.push_back(*get_folder(path / ffd.cFileName));
+            else
+                children.push_back(*new Folder(*get_meta(path / ffd.cFileName), {}));
         } else
         {
-            children.push_back(*get_file(path / ffd.cFileName));
+            children.push_back(*new File(*get_meta(path / ffd.cFileName)));
         }
-    } ;
+    }
 
     FindClose(hFind);
     return std::make_unique<Folder>(*std::move(meta), std::move(children));

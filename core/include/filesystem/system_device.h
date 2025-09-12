@@ -36,7 +36,11 @@ class BACKUP_SUITE_API WindowsDevice final : public PhysicalDevice
 public:
     explicit WindowsDevice(std::filesystem::path path): root(std::move(path)) {}
     [[nodiscard]] std::filesystem::path get_root() const { return root; }
-    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path) const override;
+    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path) const override
+    {
+        return get_folder(path, false);
+    }
+    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path, bool recursion) const;
     [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) const override;
     [[nodiscard]] std::unique_ptr<std::ifstream> get_file_stream(const std::filesystem::path& path) const override;
     [[nodiscard]] std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) const override;
