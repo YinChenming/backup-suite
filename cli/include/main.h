@@ -7,19 +7,6 @@
 
 #include "../../core/include/filesystem/system_device.h"
 
-struct BackupConfig
-{
 
-};
-
-class BackupSuite
-{
-    BackupConfig config = {};
-public:
-    BackupSuite() = default;
-    // ReSharper disable once CppNonExplicitConvertingConstructor
-    BackupSuite(const BackupConfig& cfg): config(cfg) {} // NOLINT(*-explicit-constructor)
-    void run_backup(const device &from, device &to) const;
-};
 
 #endif //MAIN_H
