@@ -2,12 +2,13 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_D
 
 set(CORE_INCLUDES
         api.h
-        device.h
-        entities.h
-        system_device.h
+        filesystem/device.h
+        filesystem/entities.h
+        filesystem/system_device.h
         utils/time_converter.h
         utils/tar.h
         utils/admin_privilege.h
+        backup/backup_controller.h
 )
 
 set(CORE_SOURCES
