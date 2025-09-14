@@ -3,12 +3,22 @@
 //
 #include <fstream>
 #include <bitset>
+#include <string>
 #include <gtest/gtest.h>
 
 #ifdef _WIN32
 #include <windows.h>
+
+#define NEWLINE (std::string("\r\n"))
+#undef CHECK_ACCESS_TIME
 #elif defined __linux__
 #include <sys/stat.h>
+
+#define NEWLINE (std::string("\n"))
+#define CHECK_ACCESS_TIME
+#else
+#error "Unsupported platform"
+static_assert(false, "Unsupported platform");
 #endif
 
 #include "filesystem/device.h"
@@ -131,7 +141,13 @@ class TestSystemDevice: public ::testing::Test
 public:
     inline static const std::filesystem::path root = std::filesystem::current_path() / "test";
     inline static const std::filesystem::path test_folder = "test_folder";
-    inline static const auto device = SystemDevice(root);
+    inline static const std::filesystem::path test_write_folder = "test_write_folder";
+
+    inline static const std::string test_file_content = "Hello, World!" + NEWLINE;
+    inline static const std::string test_file_hide_content = "Hello, World!(hide)" + NEWLINE;
+    inline static const std::string test_file_readonly_content = "Hello, World!(readonly)" + NEWLINE;
+
+    inline static auto device = SystemDevice(root);
     inline static bool volatile test_symbolic_link =
 #ifdef _WIN32
         false;
@@ -155,9 +171,10 @@ protected:
         std::filesystem::create_directory(root / test_folder);
 
         // 测试普通文件
-        if (std::ofstream ofs(root / test_folder / "test_file.txt", std::ios::out | std::ios::trunc); ofs.is_open())
+        if (std::ofstream ofs(root / test_folder / "test_file.txt", std::ios::out | std::ios::trunc | std::ios::binary); ofs.is_open())
         {
-            ofs << "Hello, World!" << std::endl;
+            ofs << test_file_content;
+            ofs.flush();
             ofs.close();
 
             GTEST_LOG_(INFO) << "create file test_file.txt";
@@ -167,9 +184,10 @@ protected:
         }
 
         // 测试隐藏文件
-        if (std::ofstream ofs(root / test_folder / "test_file_hide.txt", std::ios::out | std::ios::trunc); ofs.is_open())
+        if (std::ofstream ofs(root / test_folder / "test_file_hide.txt", std::ios::out | std::ios::trunc | std::ios::binary); ofs.is_open())
         {
-            ofs << "Hello, World!(hide)" << std::endl;
+            ofs << test_file_hide_content;
+            ofs.flush();
             ofs.close();
 
             GTEST_LOG_(INFO) << "create file test_file_hide.txt";
@@ -182,9 +200,10 @@ protected:
         }
 
         // 测试只读文件
-        if (std::ofstream ofs(root / test_folder / "test_file_readonly.txt", std::ios::out | std::ios::trunc); ofs.is_open())
+        if (std::ofstream ofs(root / test_folder / "test_file_readonly.txt", std::ios::out | std::ios::trunc | std::ios::binary); ofs.is_open())
         {
-            ofs << "Hello, World!(readonly)" << std::endl;
+            ofs << test_file_readonly_content;
+            ofs.flush();
             ofs.close();
 
             GTEST_LOG_(INFO) << "create file test_file_readonly.txt";
@@ -290,21 +309,23 @@ TEST_F(TestSystemDevice, TestFiles)
     // test normal file
     auto file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder / "test_file.txt").release());
     ASSERT_NE(file, nullptr);
-    EXPECT_EQ(std::string(std::istreambuf_iterator(file->get_stream()), {}), "Hello, World!\n");
+    EXPECT_EQ(std::string(std::istreambuf_iterator(file->get_stream()), {}), test_file_content);
     file->close();
     auto meta = std::make_unique<FileEntityMeta>(file->get_meta());
     ASSERT_NE(meta, nullptr);
     EXPECT_EQ(meta->type, FileEntityType::RegularFile);
+    EXPECT_EQ(meta->size, test_file_content.size());
     print_meta(*meta, GTEST_LOG_(INFO) << "Test Normal File:\n");
 
     // test hide file
     file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder / "test_file_hide.txt").release());
     ASSERT_NE(file, nullptr);
-    EXPECT_EQ(std::string(std::istreambuf_iterator(file->get_stream()), {}), "Hello, World!(hide)\n");
+    EXPECT_EQ(std::string(std::istreambuf_iterator(file->get_stream()), {}), test_file_hide_content);
     file->close();
     meta = std::make_unique<FileEntityMeta>(file->get_meta());
     ASSERT_NE(meta, nullptr);
     EXPECT_EQ(meta->type, FileEntityType::RegularFile);
+    EXPECT_EQ(meta->size, test_file_hide_content.size());
 #ifdef _WIN32
     EXPECT_TRUE(meta->windows_attributes & FILE_ATTRIBUTE_HIDDEN);
 #endif
@@ -317,11 +338,12 @@ TEST_F(TestSystemDevice, TestFiles)
     // test readonly file
     file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder / "test_file_readonly.txt").release());
     ASSERT_NE(file, nullptr);
-    EXPECT_EQ(std::string(std::istreambuf_iterator(file->get_stream()), {}), "Hello, World!(readonly)\n");
+    EXPECT_EQ(std::string(std::istreambuf_iterator(file->get_stream()), {}), test_file_readonly_content);
     file->close();
     meta = std::make_unique<FileEntityMeta>(file->get_meta());
     ASSERT_NE(meta, nullptr);
     EXPECT_EQ(meta->type, FileEntityType::RegularFile);
+    EXPECT_EQ(meta->size, test_file_readonly_content.size());
 #ifdef _WIN32
     EXPECT_TRUE(meta->windows_attributes & FILE_ATTRIBUTE_READONLY);
 #endif
@@ -347,6 +369,151 @@ TEST_F(TestSystemDevice, TestSymbolicLink)
     ASSERT_NE(meta, nullptr);
     EXPECT_EQ(meta->type, FileEntityType::SymbolicLink);
     print_meta(*meta, GTEST_LOG_(INFO) << "Test Symbolic Link File:\n");
+}
 
-    meta.release();
+TEST_F(TestSystemDevice, TestWriteFolder)
+{
+    auto folder = device.get_folder(test_folder);
+    ASSERT_NE(folder, nullptr);
+    FileEntityMeta meta = folder->get_meta(), new_meta;
+    meta.path = test_write_folder;
+    Folder tmp_folder(meta, {});
+    ASSERT_TRUE(device.write_folder(tmp_folder));
+
+    folder = device.get_folder(test_write_folder);
+    ASSERT_NE(folder, nullptr);
+    auto new_folder = device.get_folder(test_write_folder);
+    ASSERT_NE(new_folder, nullptr);
+
+    meta = folder->get_meta();
+    new_meta = new_folder->get_meta();
+
+
+#ifdef CHECK_ACCESS_TIME
+    EXPECT_EQ(
+        std::chrono::duration_cast<std::chrono::microseconds>(new_meta.access_time.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(meta.access_time.time_since_epoch()).count()
+    );
+#endif
+
+    EXPECT_EQ(
+        std::chrono::duration_cast<std::chrono::microseconds>(new_meta.creation_time.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(meta.creation_time.time_since_epoch()).count()
+    );
+    EXPECT_EQ(
+        std::chrono::duration_cast<std::chrono::microseconds>(new_meta.modification_time.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(meta.modification_time.time_since_epoch()).count()
+    );
+    EXPECT_EQ(new_meta.posix_mode, meta.posix_mode);
+    EXPECT_EQ(new_meta.windows_attributes, meta.windows_attributes);
+    EXPECT_EQ(new_meta.type, meta.type);
+
+    print_folder(*new_folder, GTEST_LOG_(INFO) << "Test Write Folder:\n");
+}
+
+TEST_F(TestSystemDevice, TestWriteFile)
+{
+    auto file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder / "test_file.txt").release());
+    ASSERT_NE(file, nullptr);
+    FileEntityMeta meta, new_meta;
+    meta = file->get_meta();
+    file->get_meta().path = "test_write_file.txt";
+    ASSERT_TRUE(device.write_file(*file));
+    file->close();
+    auto new_file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file("test_write_file.txt").release());
+    ASSERT_NE(new_file, nullptr);
+    EXPECT_EQ(std::string(std::istreambuf_iterator(new_file->get_stream()), {}), test_file_content);
+    new_file->close();
+    new_meta = new_file->get_meta();
+
+
+#ifdef CHECK_ACCESS_TIME
+    EXPECT_EQ(
+        std::chrono::duration_cast<std::chrono::microseconds>(new_meta.access_time.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(meta.access_time.time_since_epoch()).count()
+    );
+#endif
+
+    EXPECT_EQ(
+        std::chrono::duration_cast<std::chrono::microseconds>(new_meta.creation_time.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(meta.creation_time.time_since_epoch()).count()
+    );
+    EXPECT_EQ(
+        std::chrono::duration_cast<std::chrono::microseconds>(new_meta.modification_time.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(meta.modification_time.time_since_epoch()).count()
+    );
+    EXPECT_EQ(new_meta.posix_mode, meta.posix_mode);
+    EXPECT_EQ(new_meta.windows_attributes, meta.windows_attributes);
+    EXPECT_EQ(new_meta.size, meta.size);
+    EXPECT_EQ(new_meta.type, meta.type);
+    print_file(*new_file, GTEST_LOG_(INFO) << "Test Write File:\n");
+
+    file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder / "test_file_readonly.txt").release());
+    ASSERT_NE(file, nullptr);
+    meta = file->get_meta();
+    file->get_meta().path = "test_write_file_readonly.txt";
+    ASSERT_TRUE(device.write_file(*file));
+    file->close();
+    new_file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file("test_write_file_readonly.txt").release());
+    ASSERT_NE(new_file, nullptr);
+    EXPECT_EQ(std::string(std::istreambuf_iterator(new_file->get_stream()), {}), test_file_readonly_content);
+    new_file->close();
+    new_meta = new_file->get_meta();
+
+
+#ifdef CHECK_ACCESS_TIME
+    EXPECT_EQ(
+        std::chrono::duration_cast<std::chrono::microseconds>(new_meta.access_time.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(meta.access_time.time_since_epoch()).count()
+    );
+#endif
+
+    EXPECT_EQ(
+        std::chrono::duration_cast<std::chrono::microseconds>(new_meta.creation_time.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(meta.creation_time.time_since_epoch()).count()
+    );
+    EXPECT_EQ(
+        std::chrono::duration_cast<std::chrono::microseconds>(new_meta.modification_time.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(meta.modification_time.time_since_epoch()).count()
+    );
+    EXPECT_EQ(new_meta.posix_mode, meta.posix_mode);
+    EXPECT_EQ(new_meta.windows_attributes, meta.windows_attributes);
+    EXPECT_EQ(new_meta.size, meta.size);
+    EXPECT_EQ(new_meta.type, meta.type);
+    print_file(*new_file, GTEST_LOG_(INFO) << "Test Write Readonly File:\n");
+
+    file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder / "test_file_hide.txt").release());
+    ASSERT_NE(file, nullptr);
+    meta = file->get_meta();
+    file->get_meta().path = "test_write_file_hide.txt";
+    ASSERT_TRUE(device.write_file(*file));
+    file->close();
+    new_file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file("test_write_file_hide.txt").release());
+    ASSERT_NE(new_file, nullptr);
+    EXPECT_EQ(std::string(std::istreambuf_iterator(new_file->get_stream()), {}), test_file_hide_content);
+    new_file->close();
+    new_meta = new_file->get_meta();
+
+
+#ifdef CHECK_ACCESS_TIME
+    EXPECT_EQ(
+        std::chrono::duration_cast<std::chrono::microseconds>(new_meta.access_time.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(meta.access_time.time_since_epoch()).count()
+    );
+#endif
+
+    EXPECT_EQ(
+        std::chrono::duration_cast<std::chrono::microseconds>(new_meta.creation_time.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(meta.creation_time.time_since_epoch()).count()
+    );
+    EXPECT_EQ(
+        std::chrono::duration_cast<std::chrono::microseconds>(new_meta.modification_time.time_since_epoch()).count(),
+        std::chrono::duration_cast<std::chrono::microseconds>(meta.modification_time.time_since_epoch()).count()
+    );
+    EXPECT_EQ(new_meta.posix_mode, meta.posix_mode);
+    EXPECT_EQ(new_meta.windows_attributes, meta.windows_attributes);
+    EXPECT_EQ(new_meta.size, meta.size);
+    EXPECT_EQ(new_meta.type, meta.type);
+    print_file(*new_file, GTEST_LOG_(INFO) << "Test Write Hide File:\n");
+
 }

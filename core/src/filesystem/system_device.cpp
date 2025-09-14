@@ -4,7 +4,7 @@
 
 #include <fstream>
 
-#include "../../include/filesystem/system_device.h"
+#include "filesystem/system_device.h"
 
 using namespace utils::time_converter;
 
@@ -55,7 +55,7 @@ std::unique_ptr<ReadableFile> WindowsDevice::get_file(const std::filesystem::pat
     {
         return nullptr;
     }
-    std::unique_ptr<std::ifstream> fs(new std::ifstream(root / path));
+    std::unique_ptr<std::ifstream> fs(new std::ifstream(root / path, std::ios::in | std::ios::binary));
     if (!fs || !fs->good())
     {
         return nullptr;
@@ -66,7 +66,9 @@ std::unique_ptr<ReadableFile> WindowsDevice::get_file(const std::filesystem::pat
 
 std::unique_ptr<std::ifstream> WindowsDevice::get_file_stream(const std::filesystem::path& path) const
 {
-    return std::make_unique<std::ifstream>(root / path);
+    return std::filesystem::exists(root / path) && std::filesystem::is_regular_file(root / path) ?
+        std::make_unique<std::ifstream>(root / path) :
+        nullptr;
 }
 
 /**
@@ -293,15 +295,109 @@ bool WindowsDevice::exists(const std::filesystem::path& path) const
     return attributes != INVALID_FILE_ATTRIBUTES;
 }
 
-bool WindowsDevice::write_file(const ReadableFile &file)
+bool WindowsDevice::write_file(ReadableFile &file)
 {
-    return false;
+    auto meta = file.get_meta();
+    const auto realpath = root / meta.path;
+    if (exists(realpath))
+        return false;
+    if (meta.type == FileEntityType::SymbolicLink)
+    {
+        throw std::runtime_error("Creating symbolic links is not supported now.");    // TODO: 创建符号链接
+    }
+    std::ofstream ofs(realpath, std::ios::out | std::ios::binary | std::ios::trunc);
+    std::unique_ptr<std::vector<std::byte>> data = file.read(CACHE_SIZE);
+    while (data && !data->empty())
+    {
+        if (!ofs.is_open() || !ofs.good())
+        {
+            ofs.close();
+            return false;
+        }
+        ofs.write(reinterpret_cast<const char*>(data->data()), data->size());
+        data = file.read(CACHE_SIZE);
+    }
+    ofs.flush();
+    ofs.close();
+
+    return set_file_attributes(meta);
 }
 
-bool WindowsDevice::write_folder(const Folder &folder)
+bool WindowsDevice::write_folder(Folder &folder)
 {
-    return false;
+    auto meta = folder.get_meta();
+    meta.type = FileEntityType::Directory;
+    const auto realpath = root / folder.get_meta().path;
+    if (exists(realpath))
+        return false;
+    if (!std::filesystem::create_directories(realpath))
+        return false;
+    return set_file_attributes(meta);
 }
+
+bool WindowsDevice::set_file_attributes(const FileEntityMeta& meta) const
+{
+    const auto realpath = root / meta.path;
+    if (!exists(realpath))
+        return false;
+
+    if (meta.type == FileEntityType::SymbolicLink)
+        throw std::runtime_error("Setting attributes for symbolic links is not supported now.");    // TODO: 恢复符号链接
+
+    // set file times
+    auto chrono2ft = [](const std::chrono::system_clock::time_point &tp) -> FILETIME {
+        FILETIME ft;
+        ULARGE_INTEGER ull;
+        ull.QuadPart = std::chrono::duration_cast<std::chrono::nanoseconds>(tp.time_since_epoch()).count() / 100 +
+                       TICKS_FROM_FILESYSTEM_TO_UTC_EPOCH;
+        ft.dwLowDateTime = ull.LowPart;
+        ft.dwHighDateTime = ull.HighPart;
+        return ft;
+    };
+
+    const auto ctime = chrono2ft(meta.creation_time),
+    mtime = chrono2ft(meta.modification_time),
+    atime = chrono2ft(meta.access_time);
+
+    HANDLE hFile = CreateFileW(
+        realpath.wstring().c_str(),
+        FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, // FILE_FLAG_BACKUP_SEMANTICS 允许打开目录
+        nullptr
+    );
+    if (hFile == INVALID_HANDLE_VALUE)
+        return false;
+    const auto resultSetFileTime = SetFileTime(hFile, &ctime, &atime, &mtime);
+    CloseHandle(hFile);
+    if (!resultSetFileTime)
+        return false;
+
+    // set file attributes
+    DWORD attributes = meta.windows_attributes;
+    if (meta.type == FileEntityType::Directory)
+        attributes |= FILE_ATTRIBUTE_DIRECTORY;
+    else
+        attributes &= ~FILE_ATTRIBUTE_DIRECTORY;
+
+    if (meta.type == FileEntityType::SymbolicLink)
+        attributes |= FILE_ATTRIBUTE_REPARSE_POINT;
+    else
+        attributes &= ~FILE_ATTRIBUTE_REPARSE_POINT;
+
+    if (meta.posix_mode & 0222) // 可写
+        attributes &= ~FILE_ATTRIBUTE_READONLY;
+    else
+        attributes |= FILE_ATTRIBUTE_READONLY;
+
+    if (!SetFileAttributesW(realpath.wstring().c_str(), attributes))
+        // 设置文件属性失败
+        return false;
+    return true;
+}
+
 
 #elif defined __linux__
 #endif

@@ -4,13 +4,22 @@
 
 #ifndef DEVICE_H
 #define DEVICE_H
+#pragma once
 
-#include <iostream>
 #include <filesystem>
 #include <fstream>
+#include <algorithm>
 
-#include "../api.h"
+#include "api.h"
 #include "entities.h"
+
+// 解决与 Windows.h 中 min 和 max 宏冲突的问题
+#ifndef min
+#define min (std::min)
+#endif
+#ifndef max
+#define max (std::max)
+#endif
 
 class PhysicalDeviceReadableFile: public ReadableFile
 {
@@ -24,25 +33,26 @@ public:
         this->PhysicalDeviceReadableFile::close();
     };
     std::ifstream &get_stream() { return *stream; }
-    [[nodiscard]] std::vector<std::byte> read() override
+    [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read() override
     {
         if (!stream || !stream->good())
-            return {};
-        const auto buffer = std::make_unique<std::vector<std::byte>>(meta.size);
+            return nullptr;
+        auto buffer = std::make_unique<std::vector<std::byte>>(meta.size);
         stream->read(reinterpret_cast<char*>(buffer->data()), meta.size);
         if (stream->gcount() != static_cast<std::streamsize>(meta.size))
-            return {};
-        return *buffer;
+            return nullptr;
+        return buffer;
     }
-    [[nodiscard]] std::vector<std::byte> read(size_t size) override
+    [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read(size_t size) override
     {
         if (!stream || !stream->good() || size == 0)
-            return {};
-        const auto buffer = std::make_unique<std::vector<std::byte>>(size);
+            return nullptr;
+        size = min(size, meta.size);
+        auto buffer = std::make_unique<std::vector<std::byte>>(size);
         stream->read(reinterpret_cast<char*>(buffer->data()), size);
         if (stream->gcount() != static_cast<std::streamsize>(size))
-            return {};
-        return *buffer;
+            return nullptr;
+        return buffer;
     }
     void close() override
     {
@@ -62,8 +72,8 @@ public:
     [[nodiscard]] virtual std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) const =0;
     [[nodiscard]] virtual std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) const = 0;
     [[nodiscard]] virtual bool exists(const std::filesystem::path& path) const = 0;
-    virtual bool write_file(const ReadableFile &) = 0;
-    virtual bool write_folder(const Folder &folder) = 0;
+    virtual bool write_file(ReadableFile &) = 0;
+    virtual bool write_folder(Folder &folder) = 0;
 };
 
 class BACKUP_SUITE_API PhysicalDevice: Device

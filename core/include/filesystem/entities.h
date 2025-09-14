@@ -4,13 +4,13 @@
 
 #ifndef FILE_ENTITY_H
 #define FILE_ENTITY_H
+#pragma once
 
-#include <iostream>
 #include <utility>
 #include <vector>
 #include <filesystem>
 
-#include "../api.h"
+#include "api.h"
 
 enum class FileEntityType
 {
@@ -85,8 +85,8 @@ class BACKUP_SUITE_API ReadableFile : public File
 public:
     ~ReadableFile() override = default;
     ReadableFile() = default;
-    [[nodiscard]] virtual std::vector<std::byte> read() = 0;
-    [[nodiscard]] virtual std::vector<std::byte> read(size_t size) = 0;
+    [[nodiscard]] virtual std::unique_ptr<std::vector<std::byte>> read() = 0;
+    [[nodiscard]] virtual std::unique_ptr<std::vector<std::byte>> read(size_t size) = 0;
     virtual void close() {};
 };
 

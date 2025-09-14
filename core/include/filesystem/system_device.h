@@ -4,6 +4,7 @@
 
 #ifndef SYSTEM_DEVICE_H
 #define SYSTEM_DEVICE_H
+#pragma once
 
 #include <utility>
 #ifdef _WIN32
@@ -19,7 +20,7 @@
 static_assert(false, "Unsupported platform");
 #endif
 
-#include "../utils/time_converter.h"
+#include "utils/time_converter.h"
 #include "device.h"
 
 
@@ -45,8 +46,10 @@ public:
     [[nodiscard]] std::unique_ptr<std::ifstream> get_file_stream(const std::filesystem::path& path) const override;
     [[nodiscard]] std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) const override;
     [[nodiscard]] bool exists(const std::filesystem::path& path) const override;
-    bool write_file(const ReadableFile&) override;
-    bool write_folder(const Folder &folder) override;
+    bool write_file(ReadableFile&) override;
+    bool write_folder(Folder &folder) override;
+private:
+    [[nodiscard]] bool set_file_attributes(const FileEntityMeta &meta) const;
     static std::wstring sid2name(const PSID sid) {
         if (!sid) {
             return L"";
