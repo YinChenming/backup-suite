@@ -2,9 +2,9 @@
 // Created by ycm on 25-9-3.
 //
 
-#pragma once
 #ifndef API_H
 #define API_H
+#pragma once
 
 // 这个宏只在Windows平台上有意义
 #ifdef _WIN32

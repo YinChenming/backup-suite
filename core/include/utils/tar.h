@@ -4,7 +4,8 @@
 
 #ifndef TAR_H
 #define TAR_H
-#include <istream>
+#pragma once
+
 
 struct TarFileHeader
 {

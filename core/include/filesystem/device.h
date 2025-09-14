@@ -13,13 +13,9 @@
 #include "api.h"
 #include "entities.h"
 
-// 解决与 Windows.h 中 min 和 max 宏冲突的问题
-#ifndef min
-#define min (std::min)
-#endif
-#ifndef max
-#define max (std::max)
-#endif
+// 取消 MSVC 中定义的 min 和 max 宏
+#undef min
+#undef max
 
 class PhysicalDeviceReadableFile: public ReadableFile
 {
@@ -47,7 +43,7 @@ public:
     {
         if (!stream || !stream->good() || size == 0)
             return nullptr;
-        size = min(size, meta.size);
+        size = std::min(size, meta.size);
         auto buffer = std::make_unique<std::vector<std::byte>>(size);
         stream->read(reinterpret_cast<char*>(buffer->data()), size);
         if (stream->gcount() != static_cast<std::streamsize>(size))

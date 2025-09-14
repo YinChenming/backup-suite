@@ -4,6 +4,7 @@
 
 #ifndef BACKUPSUITE_ADMIN_PRIVILEGES_H
 #define BACKUPSUITE_ADMIN_PRIVILEGES_H
+#pragma once
 
 #include "api.h"
 

@@ -4,6 +4,7 @@
 
 #ifndef BACKUPSUITE_BACKUP_CONTROLLER_H
 #define BACKUPSUITE_BACKUP_CONTROLLER_H
+#pragma once
 
 #include "api.h"
 #include "filesystem/device.h"

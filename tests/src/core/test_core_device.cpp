@@ -161,7 +161,6 @@ protected:
 #else
     static void SetUpTestCase()
 #endif
-    // static void SetUpSuitCase()
     {
         if (std::filesystem::exists(root))
         {
@@ -262,7 +261,6 @@ protected:
 #else
     static void TearDownTestCase()
 #endif
-    // static void TearDownSuitCase()
     {
         if (std::filesystem::exists(root / test_folder / "test_file_readonly.txt"))
         {
