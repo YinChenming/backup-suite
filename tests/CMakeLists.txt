@@ -9,6 +9,7 @@ find_package(GTest REQUIRED)
 set(CORE_TEST_SOURCE
         src/core/test_core_device.cpp
         src/core/core_utils.cpp
+        src/core/test_core_backup_suite.cpp
 )
 
 add_executable(core_tests

@@ -17,14 +17,14 @@ struct BackupConfig
     FileEntityType backup_file_types = FileEntityType::RegularFile | FileEntityType::Directory;
 };
 
-class BACKUP_SUITE_API BackupSuite
+class BACKUP_SUITE_API BackupController
 {
     BackupConfig config = {};
 public:
-    BackupSuite() = default;
+    BackupController() = default;
     // ReSharper disable once CppNonExplicitConvertingConstructor
-    BackupSuite(const BackupConfig& cfg): config(cfg) {} // NOLINT(*-explicit-constructor)
-    void run_backup(const Device &from, Device &to) const;
+    BackupController(const BackupConfig& cfg): config(cfg) {} // NOLINT(*-explicit-constructor)
+    void run_backup(Device &from, Device &to) const;
 };
 
 #endif // BACKUPSUITE_BACKUP_CONTROLLER_H

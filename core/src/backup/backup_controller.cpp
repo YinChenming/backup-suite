@@ -3,7 +3,7 @@
 //
 #include "backup/backup_controller.h"
 
-void BackupSuite::run_backup(const Device &from, Device &to) const
+void BackupController::run_backup(Device &from, Device &to) const
 {
     std::queue<std::unique_ptr<Folder>> queue;
     queue.push(from.get_folder(""));
@@ -29,6 +29,7 @@ void BackupSuite::run_backup(const Device &from, Device &to) const
             if (!tmp_file)
                 continue;
             to.write_file(*tmp_file);
+            tmp_file->close();
         }
     }
 }
