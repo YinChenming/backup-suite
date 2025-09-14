@@ -22,5 +22,13 @@ if (WIN32)
     target_link_libraries(core_tests PRIVATE Shell32.lib)
 endif ()
 
+if (GTest_VERSION VERSION_GREATER_EQUAL "1.8.1")
+    # 如果 GTest 版本大于等于 1.8.1，就定义GTEST_NEW_SETUP_NAME宏，使用新的SetUpTestSuite和TearDownTestSuite名称
+    message(STATUS "GTest version ${GTest_VERSION} found. Using modern SetUpTestSuite names.")
+    target_compile_definitions(core_tests PRIVATE GTEST_NEW_SETUP_NAME=1)
+else ()
+    message(STATUS "GTest version ${GTest_VERSION} found. Using legacy SetUpTestCase names.")
+endif ()
+
 include(GoogleTest)
 gtest_discover_tests(core_tests)

@@ -140,15 +140,12 @@ public:
 #endif
 
 protected:
-    // static void SetUpTestCase()
-    // {
-    //     SetUpSuitCase();
-    // }
+#ifdef GTEST_NEW_SETUP_NAME
     static void SetUpTestSuite()
-    {
-        SetUpSuitCase();
-    }
-    static void SetUpSuitCase()
+#else
+    static void SetUpTestCase()
+#endif
+    // static void SetUpSuitCase()
     {
         if (std::filesystem::exists(root))
         {
@@ -224,8 +221,12 @@ protected:
         {
             try
             {
-                run_script_as_admin(root / "create_sl.bat");
-                GTEST_LOG_(INFO) << "create symbolic link";
+                test_symbolic_link = run_script_as_admin(root / "create_sl.bat");
+                if (test_symbolic_link)
+                    GTEST_LOG_(INFO) << "create symbolic link";
+                else
+                    GTEST_LOG_(ERROR) << "User cancelled the UAC prompt, symbolic link not created.\n"
+                << "To enable symbolic link tests, please run the test suite again and accept the UAC prompt.";
             } catch (const std::exception& e)
             {
                 GTEST_LOG_(ERROR) << "Failed to create symbolic link: " << e.what() << "\n";
@@ -237,15 +238,12 @@ protected:
 #endif
     }
 
-    // static void TearDownTestCase()
-    // {
-    //     TearDownSuitCase();
-    // }
+#ifdef GTEST_NEW_SETUP_NAME
     static void TearDownTestSuite()
-    {
-        TearDownSuitCase();
-    }
-    static void TearDownSuitCase()
+#else
+    static void TearDownTestCase()
+#endif
+    // static void TearDownSuitCase()
     {
         if (std::filesystem::exists(root / test_folder / "test_file_readonly.txt"))
         {
