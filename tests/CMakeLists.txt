@@ -6,9 +6,18 @@ endif ()
 
 find_package(GTest REQUIRED)
 
-add_executable(core_tests
+set(CORE_TEST_SOURCE
         src/core/test_core_device.cpp
+        src/core/core_utils.cpp
+)
+
+add_executable(core_tests
         main.cpp
+        ${CORE_TEST_SOURCE}
+)
+
+target_include_directories(core_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 add_dependencies(core_tests backup_suite_core)

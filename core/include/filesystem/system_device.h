@@ -33,7 +33,7 @@ const unsigned long long TICKS_FROM_FILESYSTEM_TO_UTC_EPOCH = 116444736000000000
 
 class BACKUP_SUITE_API WindowsDevice final : public PhysicalDevice
 {
-    std::filesystem::path root;
+    std::filesystem::path root = {};
 public:
     explicit WindowsDevice(std::filesystem::path path): root(std::move(path)) {}
     [[nodiscard]] std::filesystem::path get_root() const { return root; }
@@ -48,7 +48,7 @@ public:
     [[nodiscard]] bool exists(const std::filesystem::path& path) const override;
     bool write_file(ReadableFile&) override;
     bool write_folder(Folder &folder) override;
-private:
+protected:
     [[nodiscard]] bool set_file_attributes(const FileEntityMeta &meta) const;
     static std::wstring sid2name(const PSID sid) {
         if (!sid) {
@@ -79,7 +79,7 @@ private:
             return domain_buf.substr(0, domain_len) + L"\\" + name_buf.substr(0, name_len);
         }
         // return name_buf.substr(0, name_len - 1);
-        return name_buf;
+        return name_buf.substr(0, name_len);
     }
 };
 

@@ -6,12 +6,15 @@
 #define BACKUPSUITE_BACKUP_CONTROLLER_H
 #pragma once
 
+#include <queue>
+
 #include "api.h"
 #include "filesystem/device.h"
 
 struct BackupConfig
 {
     bool backup_symbolic_links = false;
+    FileEntityType backup_file_types = FileEntityType::RegularFile | FileEntityType::Directory;
 };
 
 class BACKUP_SUITE_API BackupSuite

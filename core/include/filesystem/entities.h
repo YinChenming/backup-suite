@@ -9,20 +9,42 @@
 #include <utility>
 #include <vector>
 #include <filesystem>
+#include <type_traits>  // for std::underlying_type
 
 #include "api.h"
 
-enum class FileEntityType
+enum class FileEntityType : std::uint8_t
 {
-    RegularFile,
-    Directory,
-    SymbolicLink,
-    Fifo,
-    Socket,
-    BlockDevice,
-    CharacterDevice,
-    Unknown
+    Unknown = 0,
+    RegularFile = 1 << 0,
+    Directory = 1 << 1,
+    SymbolicLink = 1 << 2,
+    Fifo = 1 << 3,
+    Socket = 1 << 4,
+    BlockDevice = 1 << 5,
+    CharacterDevice = 1 << 6
 };
+
+// Enable bitwise operations for FileEntityType
+constexpr FileEntityType operator|(FileEntityType a, FileEntityType b) {
+    using T = std::underlying_type_t<FileEntityType>;
+    return static_cast<FileEntityType>(static_cast<T>(a) | static_cast<T>(b));
+}
+
+constexpr FileEntityType operator&(FileEntityType a, FileEntityType b) {
+    using T = std::underlying_type_t<FileEntityType>;
+    return static_cast<FileEntityType>(static_cast<T>(a) & static_cast<T>(b));
+}
+
+constexpr FileEntityType operator^(FileEntityType a, FileEntityType b) {
+    using T = std::underlying_type_t<FileEntityType>;
+    return static_cast<FileEntityType>(static_cast<T>(a) ^ static_cast<T>(b));
+}
+
+constexpr FileEntityType operator~(FileEntityType a) {
+    using T = std::underlying_type_t<FileEntityType>;
+    return static_cast<FileEntityType>(~static_cast<T>(a));
+}
 
 struct FileEntityMeta
 {
@@ -64,7 +86,7 @@ public:
 class BACKUP_SUITE_API Folder: public FileEntity
 {
 protected:
-    std::vector<FileEntity> children;
+    std::vector<FileEntity> children = {};
 public:
     ~Folder() override = default;
     Folder(const FileEntityMeta& metaData, const std::vector<FileEntity>& childrenData)
@@ -85,6 +107,8 @@ class BACKUP_SUITE_API ReadableFile : public File
 public:
     ~ReadableFile() override = default;
     ReadableFile() = default;
+    explicit ReadableFile(File &file): File(file.get_meta()) {}
+    explicit ReadableFile(const FileEntityMeta& metaData): File(metaData) {}
     [[nodiscard]] virtual std::unique_ptr<std::vector<std::byte>> read() = 0;
     [[nodiscard]] virtual std::unique_ptr<std::vector<std::byte>> read(size_t size) = 0;
     virtual void close() {};

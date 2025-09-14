@@ -8,7 +8,6 @@
 
 #include <filesystem>
 #include <fstream>
-#include <algorithm>
 
 #include "api.h"
 #include "entities.h"
@@ -16,46 +15,30 @@
 // 取消 MSVC 中定义的 min 和 max 宏
 #undef min
 #undef max
+#include <algorithm>
 
 class PhysicalDeviceReadableFile: public ReadableFile
 {
-    std::unique_ptr<std::ifstream> stream;
+    std::unique_ptr<std::ifstream> stream = nullptr;
 public:
-    PhysicalDeviceReadableFile(const FileEntityMeta &metaData, std::unique_ptr<std::ifstream> fs): stream(std::move(fs))
+    PhysicalDeviceReadableFile(File& file, std::unique_ptr<std::ifstream> fs): ReadableFile(file)
     {
-        meta = metaData;
+        stream = std::move(fs);
+    }
+    PhysicalDeviceReadableFile(const FileEntityMeta &metaData, std::unique_ptr<std::ifstream> fs): ReadableFile(metaData)
+    {
+        stream = std::move(fs);
     }
     ~PhysicalDeviceReadableFile() override{
         this->PhysicalDeviceReadableFile::close();
     };
     std::ifstream &get_stream() { return *stream; }
-    [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read() override
-    {
-        if (!stream || !stream->good())
-            return nullptr;
-        auto buffer = std::make_unique<std::vector<std::byte>>(meta.size);
-        stream->read(reinterpret_cast<char*>(buffer->data()), meta.size);
-        if (stream->gcount() != static_cast<std::streamsize>(meta.size))
-            return nullptr;
-        return buffer;
-    }
-    [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read(size_t size) override
-    {
-        if (!stream || !stream->good() || size == 0)
-            return nullptr;
-        size = std::min(size, meta.size);
-        auto buffer = std::make_unique<std::vector<std::byte>>(size);
-        stream->read(reinterpret_cast<char*>(buffer->data()), size);
-        if (stream->gcount() != static_cast<std::streamsize>(size))
-            return nullptr;
-        return buffer;
-    }
+    [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read() override;
+    [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read(size_t size) override;
     void close() override
     {
         if (stream && stream->is_open())
-        {
             stream->close();
-        }
     }
 };
 
@@ -64,11 +47,11 @@ class BACKUP_SUITE_API Device
 public:
     static constexpr size_t CACHE_SIZE = 1024 * 1024;
     virtual ~Device() = default;
-    [[nodiscard]] virtual std::unique_ptr<Folder> get_folder(const std::filesystem::path& path) const = 0;
-    [[nodiscard]] virtual std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) const =0;
-    [[nodiscard]] virtual std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) const = 0;
+    [[nodiscard]] virtual std::unique_ptr<Folder> get_folder(const std::filesystem::path &path) const = 0;
+    [[nodiscard]] virtual std::unique_ptr<ReadableFile> get_file(const std::filesystem::path &path) const = 0;
+    [[nodiscard]] virtual std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path &path) const = 0;
     [[nodiscard]] virtual bool exists(const std::filesystem::path& path) const = 0;
-    virtual bool write_file(ReadableFile &) = 0;
+    virtual bool write_file(ReadableFile &file) = 0;
     virtual bool write_folder(Folder &folder) = 0;
 };
 
@@ -77,16 +60,53 @@ class BACKUP_SUITE_API PhysicalDevice: Device
 public:
     static constexpr size_t CACHE_SIZE = 1024 * 1024;
     ~PhysicalDevice() override = default;
-    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) const override{
-        const auto meta = get_meta(path);
-        if (!meta || meta->type != FileEntityType::RegularFile)
-            return nullptr;
-        std::unique_ptr<std::ifstream> stream = get_file_stream(path);
-        if (!stream)
-            return nullptr;
-        return std::make_unique<PhysicalDeviceReadableFile>(*meta, std::move(stream));
-    }
+    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) const override;
     [[nodiscard]] virtual std::unique_ptr<std::ifstream> get_file_stream(const std::filesystem::path& path) const = 0;
+};
+
+class BACKUP_SUITE_API DeviceDecorator: public Device
+{
+protected:
+    std::shared_ptr<Device> device = nullptr;
+public:
+    DeviceDecorator() = default;
+    explicit DeviceDecorator(const std::shared_ptr<Device> &device) : device(device) {}
+    ~DeviceDecorator() override = default;
+    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path) const override
+    {
+        return device->get_folder(path);
+    }
+    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) const override
+    {
+        return device->get_file(path);
+    }
+    [[nodiscard]] std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) const override
+    {
+        return device->get_meta(path);
+    }
+    [[nodiscard]] bool exists(const std::filesystem::path& path) const override
+    {
+        if (!device->exists(path))
+            return false;
+        return is_valid(*device->get_meta(path));
+    }
+    bool write_file(ReadableFile &file) override
+    {
+        return device->write_file(file);
+    }
+    bool write_folder(Folder &folder) override
+    {
+        return device->write_folder(folder);
+    }
+    void set_device(const std::shared_ptr<Device>& new_device)
+    {
+        device = new_device;
+    }
+    [[nodiscard]] std::shared_ptr<Device> get_device() const
+    {
+        return device;
+    }
+    [[nodiscard]] virtual bool is_valid(const FileEntityMeta& path) const = 0;
 };
 
 #endif // DEVICE_H
