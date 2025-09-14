@@ -199,7 +199,7 @@ std::unique_ptr<FileEntityMeta> WindowsDevice::get_meta(const std::filesystem::p
     }
     meta.windows_attributes = attributes;
 
-    meta.path = std::filesystem::absolute(realpath);
+    meta.path = std::filesystem::relative(realpath, root);
     LARGE_INTEGER file_size;
     // 使用Windows API 获取文件大小
     if (!GetFileSizeEx(hFile, &file_size))

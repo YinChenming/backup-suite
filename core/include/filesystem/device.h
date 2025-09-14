@@ -55,7 +55,7 @@ public:
     virtual bool write_folder(Folder &folder) = 0;
 };
 
-class BACKUP_SUITE_API PhysicalDevice: Device
+class BACKUP_SUITE_API PhysicalDevice: public Device
 {
 public:
     static constexpr size_t CACHE_SIZE = 1024 * 1024;
