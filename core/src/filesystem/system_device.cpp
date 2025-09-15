@@ -295,11 +295,20 @@ bool WindowsDevice::exists(const std::filesystem::path& path) const
     return attributes != INVALID_FILE_ATTRIBUTES;
 }
 
-bool WindowsDevice::write_file(ReadableFile &file)
+bool WindowsDevice::write_file(ReadableFile& file) {
+    return _write_file(file, false);
+}
+
+bool WindowsDevice::write_file_force(ReadableFile &file)
 {
-    auto meta = file.get_meta();
+    return _write_file(file, true);
+}
+
+bool WindowsDevice::_write_file(ReadableFile &file, const bool force) const
+{
+    const auto meta = file.get_meta();
     const auto realpath = root / meta.path;
-    if (exists(realpath))
+    if (exists(realpath) && !force)
         return false;
     if (meta.type == FileEntityType::SymbolicLink)
     {

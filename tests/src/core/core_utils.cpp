@@ -61,6 +61,7 @@ void print_meta(const FileEntityMeta& meta, std::ostream& os)
     << "Device Major: " << meta.device_major << "\n"
     << "Device Minor: " << meta.device_minor << "\n"
     ;
+    os.flush();
 }
 
 void print_file(File& file, std::ostream& os)
@@ -225,7 +226,7 @@ static void TestSystemDevice::TearDownTestCase()
     if (std::filesystem::exists(root / test_folder / "test_file_readonly.txt"))
     {
 #ifdef _WIN32
-        SetFileAttributesW((root / test_folder / "test_file_readonly.txt").wstring().c_str(), FILE_ATTRIBUTE_NORMAL);
+        SetFileAttributesW((root / test_folder / "test_file_readonly.txt").wstring().c_str(), FILE_ATTRIBUTE_NORMAL & ~FILE_ATTRIBUTE_READONLY);
 #elif defined __linux__
         chmod((root / test_folder / "test_file_readonly.txt").c_str(), 0777);
 #endif

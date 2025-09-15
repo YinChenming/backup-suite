@@ -25,11 +25,11 @@ static_assert(false, "Unsupported platform");
 
 
 #ifdef _WIN32
-// Windows FILETIME epoch starts from January 1, 1601
-// Unix epoch starts from January 1, 1970
+// Windows FILETIME epoch starts from January 1, 1601,
+// Unix epoch starts from January 1, 1970,
 // The difference is 11644473600 seconds
 // FILETIME -> Unix time: (filetime - 116444736000000000) / 10000000
-const unsigned long long TICKS_FROM_FILESYSTEM_TO_UTC_EPOCH = 116444736000000000ULL;
+constexpr unsigned long long TICKS_FROM_FILESYSTEM_TO_UTC_EPOCH = 116444736000000000ULL;
 
 class BACKUP_SUITE_API WindowsDevice final : public PhysicalDevice
 {
@@ -47,8 +47,10 @@ public:
     [[nodiscard]] std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) const override;
     [[nodiscard]] bool exists(const std::filesystem::path& path) const override;
     bool write_file(ReadableFile&) override;
+    bool write_file_force(ReadableFile &file) override;
     bool write_folder(Folder &folder) override;
 protected:
+    bool _write_file(ReadableFile &file, bool force) const;
     [[nodiscard]] bool set_file_attributes(const FileEntityMeta &meta) const;
     static std::wstring sid2name(const PSID sid) {
         if (!sid) {

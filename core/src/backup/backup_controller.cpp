@@ -3,7 +3,7 @@
 //
 #include "backup/backup_controller.h"
 
-void BackupController::run_backup(Device &from, Device &to) const
+void BackupController::run_backup(const Device &from, Device &to) const
 {
     std::queue<std::unique_ptr<Folder>> queue;
     queue.push(from.get_folder(""));

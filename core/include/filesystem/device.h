@@ -52,6 +52,7 @@ public:
     [[nodiscard]] virtual std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path &path) const = 0;
     [[nodiscard]] virtual bool exists(const std::filesystem::path& path) const = 0;
     virtual bool write_file(ReadableFile &file) = 0;
+    virtual bool write_file_force(ReadableFile &file) = 0;
     virtual bool write_folder(Folder &folder) = 0;
 };
 
@@ -93,6 +94,10 @@ public:
     bool write_file(ReadableFile &file) override
     {
         return device->write_file(file);
+    }
+    bool write_file_force(ReadableFile &file) override
+    {
+        return device->write_file_force(file);
     }
     bool write_folder(Folder &folder) override
     {
