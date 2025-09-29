@@ -4,6 +4,9 @@ project(BackupSuite)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(D_CMAKE_TOOLCHAIN_FILE "C:\\Developer\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
+include("C:\\Developer\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake")
+
 if (MSVC)
     add_compile_options(/utf-8 /W4)
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")

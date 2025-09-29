@@ -5,11 +5,13 @@ elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
 endif ()
 
 find_package(GTest REQUIRED)
+find_package(LibArchive REQUIRED)
 
 set(CORE_TEST_SOURCE
         src/core/test_core_device.cpp
         src/core/core_utils.cpp
         src/core/test_core_backup_suite.cpp
+        src/core/test_core_compress.cpp
 )
 
 add_executable(core_tests
@@ -27,6 +29,8 @@ target_link_libraries(core_tests PRIVATE backup_suite_core
         GTest::gtest
         GTest::gtest_main
 )
+
+target_link_libraries(core_tests PRIVATE LibArchive::LibArchive)
 
 if (WIN32)
     target_link_libraries(core_tests PRIVATE Shell32.lib)

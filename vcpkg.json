@@ -4,6 +4,12 @@
   "dependencies": [
     {
       "name": "gtest"
+    },
+    {
+      "name": "sqlite3"
+    },
+    {
+      "name": "libarchive"
     }
   ]
 }
