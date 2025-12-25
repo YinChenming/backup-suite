@@ -179,6 +179,9 @@ package-lock.json
 # js.map
 *.js.map
 
+# VS Code
+.vscode/
+
 build*/
 cmake-build*/
 .idea

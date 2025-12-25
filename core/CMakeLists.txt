@@ -14,6 +14,11 @@ set(CORE_SOURCES
         src/filesystem/device.cpp
         src/backup/backup_controller.cpp
         src/utils/database.cpp
+        src/utils/zip.cpp
+        include/utils/bstream.h
+        include/compress/huffman.h
+        src/utils/crc.cpp
+        #        src/compress/deflate.cpp
 )
 
 # 将include目录添加到项目中

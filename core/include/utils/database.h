@@ -14,10 +14,10 @@
 
 namespace db
 {
-    struct DatabaseInitializationStrategy
+    struct BACKUP_SUITE_API DatabaseInitializationStrategy
     {
         virtual ~DatabaseInitializationStrategy() = default;
-        virtual std::string get_initialization_sql() const{return "";};
+        [[nodiscard]] virtual std::string get_initialization_sql() const{return "";};
     };
 
     template <typename T>
@@ -149,7 +149,7 @@ namespace db
         protected:
             std::unique_ptr<sqlite3_stmt, StatementDeleter> stmt = nullptr;
         public:
-            ResultSet(){}
+            ResultSet()= default;
             explicit ResultSet(std::unique_ptr<sqlite3_stmt, StatementDeleter> stmt) : stmt(std::move(stmt)) {}
             ~ResultSet() = default;
 
@@ -170,6 +170,7 @@ namespace db
         void  initialize(const DatabaseInitializationStrategy &strategy) const;
     public:
         explicit Database(DatabaseInitializationStrategy *strategy = nullptr)
+            // : Database("test.db", strategy) { }
             : Database(":memory:", strategy) { }
         explicit Database(const std::string& dbPath, DatabaseInitializationStrategy *strategy = nullptr)
         {
@@ -226,16 +227,12 @@ namespace db
             throw std::runtime_error("no rows returned");
         }
         template<typename T>
-        T query_one(sqlite3_stmt& stmt) const
+        T query_one(std::unique_ptr<sqlite3_stmt, StatementDeleter> stmt) const
         {
             if (!is_open())
                 throw std::runtime_error("database is not open");
-            sqlite3_stmt* s = nullptr;
-            if (sqlite3_prepare_v2(db_handle_.get(), sqlite3_sql(&stmt), -1, &s, nullptr) != SQLITE_OK)
-            {
-                throw std::runtime_error("failed to prepare statement: " + std::string(sqlite3_errmsg(db_handle_.get())));
-            }
-            auto rs = ResultSet<T>(std::unique_ptr<sqlite3_stmt, StatementDeleter>(s));
+            // 此处无需再次调用sqlite3_prepare_v2，因为stmt已经是准备好的语句
+            auto rs = ResultSet<T>(std::move(stmt));
             auto it = rs.begin();
             if (it != rs.end())
                 return *it;
@@ -254,50 +251,5 @@ namespace db
         }
     };
 
-    class BACKUP_SUITE_API DeviceDatabaseInitializationStrategy: public DatabaseInitializationStrategy
-    {
-    protected:
-        [[nodiscard]] std::string get_initialization_sql() const override
-        {
-            return (
-                "CREATE TABLE IF NOT EXISTS entity_type("
-                "id INTEGER PRIMARY KEY UNIQUE,"
-                "name TEXT NOT NULL UNIQUE"
-                ");"
-
-                "INSERT INTO entity_type (id, name) VALUES "
-                "(0, 'unknown'),"
-                "(1, 'regular_file'),"
-                "(2, 'directory'),"
-                "(4, 'symbolic_link'),"
-                "(8, 'fifo'),"
-                "(16, 'socket'),"
-                "(32, 'block_device'),"
-                "(64, 'character_device')"
-                ";"
-
-                "CREATE TABLE IF NOT EXISTS entity("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE,"
-                "path TEXT NOT NULL,"
-                "type INTEGER NOT NULL DEFAULT 0,"
-                "size INTEGER NOT NULL,"
-                "offset INTEGER NOT NULL DEFAULT 0,"
-                "creation_time DATETIME NOT NULL,"
-                "modification_time DATETIME NOT NULL,"
-                "access_time DATETIME NOT NULL,"
-                "posix_mode INTEGER NOT NULL DEFAULT 0,"
-                "uid INTEGER NOT NULL DEFAULT 0,"
-                "gid INTEGER NOT NULL DEFAULT 0,"
-                "user_name TEXT NOT NULL DEFAULT '',"
-                "group_name TEXT NOT NULL DEFAULT '',"
-                "windows_attributes INTEGER NOT NULL DEFAULT 0,"
-                "symbolic_link_target TEXT,"
-                "device_major INTEGER DEFAULT 0,"
-                "device_minor INTEGER DEFAULT 0,"
-                "FOREIGN KEY(type) REFERENCES entity_type(id) ON DELETE CASCADE"
-                ");"
-            );
-        }
-    };
 }
 #endif // BACKUPSUITE_DATABASE_H

@@ -1,0 +1,74 @@
+{
+  "version": 2,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 19
+  },
+  "configurePresets": [
+    {
+      "name": "vs-debug",
+      "displayName": "Debug-Visual Studio",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/cmake-build-debug-visual-studio",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "C:/Developer/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "LLVM_ENABLE_RUNTIMES": "compiler-rt"
+      },
+      "environment": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows-dynamic"
+      },
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "toolset": {
+        "value": "v143",
+        "strategy": "external"
+      }
+    },
+    {
+      "name": "mingw-debug",
+      "displayName": "Debug-MinGW64",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/cmake-build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "C:/Developer/vcpkg/scripts/buildsystems/vcpkg.cmake"
+      },
+      "environment": {
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic"
+      },
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "vs-debug",
+      "displayName": "Debug-Visual Studio",
+      "configurePreset": "vs-debug",
+      "jobs": 10
+    },
+    {
+      "name": "mingw-debug",
+      "displayName": "Debug-MinGW64",
+      "configurePreset": "mingw-debug",
+      "jobs": 10
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "vs-debug",
+      "displayName": "Debug-Visual Studio Tests",
+      "configurePreset": "vs-debug"
+    },
+    {
+      "name": "mingw-debug",
+      "displayName": "Debug-MinGW64 Tests",
+      "configurePreset": "mingw-debug"
+    }
+  ]
+}
