@@ -18,6 +18,7 @@ set(CORE_SOURCES
         include/utils/bstream.h
         include/compress/huffman.h
         src/utils/crc.cpp
+        src/filesystem/entities.cpp
         #        src/compress/deflate.cpp
 )
 

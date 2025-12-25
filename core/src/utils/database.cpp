@@ -5,6 +5,7 @@
 #include "utils/database.h"
 
 using namespace db;
+
 [[nodiscard]] bool Database::is_initialized() const
 {
     if (!is_open())
@@ -27,7 +28,6 @@ void Database::initialize(const DatabaseInitializationStrategy &strategy) const
     if (errMsg)
         sqlite3_free(errMsg);
 }
-
 
 [[nodiscard]] bool Database::exec(const std::string& sql, const bool commit) const
 {

@@ -12,8 +12,8 @@
 #include <Aclapi.h> // For GetSecurityInfo
 #include <sddl.h>   // For SID-related functions if needed, though LookupAccountSid is sufficient here
 #include <cwchar>
-
-#elif __linux__
+#elif defined(__APPLE__)
+#elif defined(__linux__)
 
 #else
 #error "Unsupported platform"
@@ -93,8 +93,14 @@ class WindowsTempDevice: public PhysicalDevice
 };
 
 using TempDevice = WindowsTempDevice;
+#elif defined(__APPLE__)
+class BACKUP_SUITE_API AppleDevice final : public device
+{
 
-#elif defined __linux__
+};
+
+using SystemDevice = AppleDevice;
+#elif defined( __linux__)
 class BACKUP_SUITE_API LinuxDevice final : public device
 {
 };

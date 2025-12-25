@@ -2,6 +2,7 @@
 // Created by ycm on 25-9-5.
 //
 #include "utils/tar.h"
+#include "utils/database_strategies.h"
 
 #include <sstream>
 #include "utils/crc.h"
@@ -10,7 +11,7 @@ using namespace tar;
 
 void TarFile::init_db_from_tar()
 {
-    if (!ifs_ || !ifs_->is_open())
+    if (!is_valid_ || !ifs_ || !ifs_->is_open())
     {
         return;
     }
@@ -166,7 +167,7 @@ void TarFile::init_db_from_tar()
 
 bool TarFile::insert_entity(const FileEntityMeta& meta, const int offset) const
 {
-    const auto stmt = db_.create_statement("INSERT INTO entity (" + TarInitializationStrategy::SQLEntityColumns + ") "
+    const auto stmt = db_.create_statement("INSERT INTO entity (" + db::TarInitializationStrategy::SQLEntityColumns + ") "
     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);");
     int i = 1;
     sqlite3_bind_text(stmt.get(), i++, reinterpret_cast<const char*>(meta.path.generic_u8string().c_str()), -1, SQLITE_TRANSIENT);
@@ -285,7 +286,7 @@ std::unique_ptr<TarFile::TarIstream> TarFile::get_file_stream(const std::filesys
     }
     if (path_str.empty()) return nullptr;
     auto stmt = db_.create_statement(
-        "SELECT " + TarInitializationStrategy::SQLEntityColumns + " FROM entity WHERE path = ? LIMIT 1;"
+        "SELECT " + db::TarInitializationStrategy::SQLEntityColumns + " FROM entity WHERE path = ? LIMIT 1;"
     );
 
     // reinterpret_cast for C++20
@@ -295,7 +296,7 @@ std::unique_ptr<TarFile::TarIstream> TarFile::get_file_stream(const std::filesys
     std::unique_ptr<TarIstream> tar;
     try
     {
-        const auto entity = db_.query_one<TarInitializationStrategy::SQLEntity>(std::move(stmt));
+        const auto entity = db_.query_one<db::TarInitializationStrategy::SQLEntity>(std::move(stmt));
         auto [meta, offset] = sql_entity2file_meta(entity);
         tar = std::make_unique<TarIstream>(*ifs_.get(), offset, meta);
     } catch (const std::exception& e)
@@ -477,15 +478,19 @@ bool TarFile::add_entity(ReadableFile& file)
     return insert_entity(meta, entry_offset);
 }
 
-void TarFile::close() const
+void TarFile::close()
 {
-    if (ifs_ && ifs_->is_open())
+    if (ifs_)
     {
-        ifs_->close();
+        if (ifs_->is_open()) ifs_->close();
+        is_valid_ = false;
         return;
     }
     if (!ofs_ || !ofs_->is_open())
+    {
+        is_valid_ = false;
         return;
+    }
 
     // Write two empty blocks to mark the end of archive
     TarBlock empty_block{};
@@ -590,7 +595,7 @@ TarFileHeader TarFile::file_meta2tar_header(const FileEntityMeta &meta, const Ta
     return header;
 }
 
-std::pair<FileEntityMeta, int> TarFile::sql_entity2file_meta(const TarInitializationStrategy::SQLEntity& entity)
+std::pair<FileEntityMeta, int> TarFile::sql_entity2file_meta(const db::TarInitializationStrategy::SQLEntity& entity)
 {
     auto [file_path, type, size, offset, ctime, mtime, atime, posix_mode, uid, gid,
         user_name, group_name, windows_attributes, symbolic_link_target, device_major, device_minor] = entity;
@@ -619,7 +624,7 @@ std::vector<std::pair<FileEntityMeta, int>> TarFile::list_dir(const std::filesys
     if (path.has_root_name() || !path.is_relative())
         return {}; // cannot analyze a path starts with "C:\"
     auto stmt = db_.create_statement(
-        "SELECT " + TarInitializationStrategy::SQLEntityColumns + " FROM entity WHERE path LIKE ? ORDER BY path ASC;"
+        "SELECT " + db::TarInitializationStrategy::SQLEntityColumns + " FROM entity WHERE path LIKE ? ORDER BY path ASC;"
     );
     std::string like_path = path.generic_u8string();
     if (like_path == "." || like_path.empty())
@@ -633,7 +638,7 @@ std::vector<std::pair<FileEntityMeta, int>> TarFile::list_dir(const std::filesys
     sqlite3_bind_text(stmt.get(), 1, like_path.c_str(), -1, SQLITE_TRANSIENT);
 
     std::vector<std::pair<FileEntityMeta, int>> results;
-    auto rs = db_.query<TarInitializationStrategy::SQLEntity>(std::move(stmt));
+    auto rs = db_.query<db::TarInitializationStrategy::SQLEntity>(std::move(stmt));
     for (const auto& entity : rs)
     {
         auto [meta, offset] = sql_entity2file_meta(entity);

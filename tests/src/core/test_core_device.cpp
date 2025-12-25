@@ -11,7 +11,7 @@
 
 #define NEWLINE (std::string("\r\n"))
 #undef CHECK_ACCESS_TIME
-#elif defined __linux__
+#elif defined(__linux__) || defined(__APPLE__)
 #include <sys/stat.h>
 
 #define NEWLINE (std::string("\n"))
@@ -76,7 +76,9 @@ TEST_F(TestSystemDevice, TestFiles)
     EXPECT_TRUE(meta->windows_attributes & FILE_ATTRIBUTE_HIDDEN);
 #endif
     print_meta(*meta, GTEST_LOG_(INFO) << "Test Hide File"
-#ifdef __linux__
+#ifdef __APPLE__
+    << "(MacOS does not support hidden attribute)"
+#elif defined(__linux__)
     << "(Linux does not support hidden attribute)"
 #endif
     << ":\n");

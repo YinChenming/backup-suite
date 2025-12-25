@@ -16,7 +16,7 @@
 
 #ifdef _WIN32
 #define NEWLINE (std::string("\r\n"))
-#elif defined __linux__
+#elif defined(__linux__) || defined(__APPLE__)
 #define NEWLINE (std::string("\n"))
 #else
 #error "Unsupported platform"
@@ -48,7 +48,7 @@ public:
     inline static bool volatile test_symbolic_link =
 #ifdef _WIN32
         false;
-#elif __linux__
+#elif defined(__linux__) || defined(__APPLE__)
         true;
 #endif
 

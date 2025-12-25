@@ -50,6 +50,19 @@ TEST(TestTar, TestOpenTar)
     }
 }
 
+TEST(TestZip, TestOpenZip)
+{
+    const std::filesystem::path raw_tar_path = R"(C:\Users\ycm\Desktop\New Folder\tar\zip.zip)";
+    zip::ZipFile zip(raw_tar_path, zip::ZipFile::input);
+    auto results = zip.list_dir(".");
+    GTEST_LOG_(INFO) << "Tar list_dir: " << results.size() << "\n";
+    for (auto &meta : results)
+    {
+        print_meta(zip::ZipFile::cdfh_to_file_meta(meta), GTEST_LOG_(INFO));
+    }
+}
+
+
 // 简单的测试文件实现，用于测试压缩功能
 class TestFile : public ReadableFile {
 public:
@@ -121,7 +134,6 @@ TEST(TestTar, TestTarCreate) {
 
     GTEST_LOG_(INFO) << "Tar create test passed!" << std::endl;
 }
-
 TEST(TestZip, TestZipCreate) {
     // 创建一个临时文件用于测试
     const std::string test_content = "Hello, this is a test file for zip compression!";
@@ -129,7 +141,7 @@ TEST(TestZip, TestZipCreate) {
 
     // 创建zip文件
     const std::string zip_path = "test_output.zip";
-    zip::ZipFile zip(zip_path);
+    zip::ZipFile zip(zip_path, zip::ZipFile::ZipMode::output);
 
     // 添加文件到zip
     bool success = zip.add_entity(test_file);
@@ -147,6 +159,61 @@ TEST(TestZip, TestZipCreate) {
     GTEST_LOG_(INFO) << "Zip create test passed!" << std::endl;
 }
 
+TEST(TestZip, TestZipRead) {
+    // 创建一个临时文件用于测试
+    const std::string test_content = "Hello, this is a test file for zip compression!";
+    const std::string test_filename = "test.txt";
+    TestFile test_file(test_filename, test_content);
+
+    // 创建zip文件
+    const std::string zip_path = "test_read.zip";
+    {
+        zip::ZipFile zip(zip_path, zip::ZipFile::ZipMode::output);
+        bool success = zip.add_entity(test_file);
+        ASSERT_TRUE(success);
+        zip.close();
+    }
+
+    // 重新打开zip文件进行读取
+    {
+        zip::ZipFile zip_reader(zip_path, zip::ZipFile::ZipMode::input);
+
+        // 测试list_dir
+        auto results = zip_reader.list_dir(".");
+        ASSERT_EQ(results.size(), 1);
+
+        auto& cdfh = results[0];
+        const auto offset = cdfh.record.local_header_offset;
+        auto meta = zip::ZipFile::cdfh_to_file_meta(cdfh);
+        ASSERT_EQ(meta.path, test_filename);
+        ASSERT_EQ(meta.type, FileEntityType::RegularFile);
+        ASSERT_EQ(meta.size, test_content.size());
+
+        // 测试get_file_stream
+        auto stream = zip_reader.get_file_stream(test_filename);
+        ASSERT_NE(stream, nullptr);
+
+        // 读取文件内容
+        std::string read_content;
+        char buffer[1024];
+        while (true) {
+            stream->read(buffer, sizeof(buffer));
+            size_t bytes_read = stream->gcount();
+            if (bytes_read == 0) {
+                break;
+            }
+            read_content.append(buffer, bytes_read);
+        }
+
+        ASSERT_EQ(read_content, test_content);
+        zip_reader.close();
+    }
+
+    // 清理
+    std::filesystem::remove(zip_path);
+
+    GTEST_LOG_(INFO) << "Zip read test passed!" << std::endl;
+}
 // 使用libarchive读取tar文件的辅助函数
 bool libarchive_read_tar(const std::string& tar_path, const std::string& expected_file, const std::string& expected_content) {
     struct archive *a;

@@ -6,6 +6,8 @@
 #define FILE_ENTITY_H
 #pragma once
 
+#include <cstddef>
+#include <memory>
 #include <utility>
 #include <vector>
 #include <filesystem>
@@ -71,6 +73,8 @@ struct FileEntityMeta
     uint32_t device_major = 0;
     uint32_t device_minor = 0;
 };
+
+BACKUP_SUITE_API void update_file_entity_meta(FileEntityMeta& meta);
 
 class BACKUP_SUITE_API FileEntity
 {

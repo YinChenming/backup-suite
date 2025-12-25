@@ -111,7 +111,7 @@ bool run_script_as_admin(const std::filesystem::path& script_path)
     WaitForSingleObject(sei.hProcess, INFINITE);
     CloseHandle(sei.hProcess);
     return true;
-#elif defined __linux__
+#elif defined(__linux__) || defined(__APPLE__)
     throw std::runtime_error("Cannot run script as admin on Linux");
 #endif
 }
@@ -169,7 +169,7 @@ static TestSystemDevice::void SetUpTestCase()
         GTEST_LOG_(INFO) << "create file test_file_readonly.txt";
 #ifdef _WIN32
         SetFileAttributesW((root / test_folder / "test_file_readonly.txt").wstring().c_str(), FILE_ATTRIBUTE_READONLY);
-#elif defined __linux__
+#elif defined(__linux__) || defined(__APPLE__)
         chmod((root / test_folder / "test_file_readonly.txt").c_str(), 0444);
 #endif
     } else
@@ -213,7 +213,8 @@ static TestSystemDevice::void SetUpTestCase()
         }
         std::filesystem::remove(root / "create_sl.bat");
     }
-#elif defined __linux__
+#elif defined(__APPLE__)
+#elif defined(__linux__)
 #endif
 }
 
@@ -227,7 +228,7 @@ static void TestSystemDevice::TearDownTestCase()
     {
 #ifdef _WIN32
         SetFileAttributesW((root / test_folder / "test_file_readonly.txt").wstring().c_str(), FILE_ATTRIBUTE_NORMAL & ~FILE_ATTRIBUTE_READONLY);
-#elif defined __linux__
+#elif defined(__linux__) || defined(__APPLE__)
         chmod((root / test_folder / "test_file_readonly.txt").c_str(), 0777);
 #endif
     }

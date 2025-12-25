@@ -9,6 +9,8 @@
 #include <sqlite3.h>
 #include <stdexcept>
 #include <string>
+#include <vector>
+#include <type_traits>
 
 #include "api.h"
 
@@ -20,32 +22,91 @@ namespace db
         [[nodiscard]] virtual std::string get_initialization_sql() const{return "";};
     };
 
+    // 1. 基础模板：默认情况下任何类型都不是 vector
     template <typename T>
-    T get_column_value(sqlite3_stmt* stmt, int col);
-
-    template<>
-    inline int get_column_value<int>(sqlite3_stmt* stmt, int col)
+    struct is_vector : std::false_type {};
+    // 2. 偏特化模板：匹配 std::vector 结构
+    // 注意：vector 有两个模板参数（类型 T 和 分配器 Allocator），
+    // 必须同时写出这两个参数才能正确匹配所有 vector 类型。
+    template <typename T, typename Allocator>
+    struct is_vector<std::vector<T, Allocator>> : std::true_type {};
+    // 3. 辅助变量模板 (C++17 风格)
+    template <typename T>
+    inline constexpr bool is_vector_v = is_vector<T>::value;
+    template <typename T>
+    inline T get_column_value(sqlite3_stmt* stmt, const int col)
     {
-        return sqlite3_column_int(stmt, col);
+        if constexpr (std::is_same_v<T, std::string>)
+        {
+            const unsigned char* text = sqlite3_column_text(stmt, col);
+            const auto bytes = sqlite3_column_bytes(stmt, col);
+            return text ? std::string(reinterpret_cast<const char*>(text), bytes) : "";
+        } else if constexpr (std::is_integral_v<T>) {
+            if constexpr (sizeof(T) <= 4) {
+                return static_cast<T>(sqlite3_column_int(stmt, col));
+            } else if constexpr (sizeof(T) == 8){
+                return static_cast<T>(sqlite3_column_int64(stmt, col));
+            }
+            else
+            {
+                static_assert(0, "unsupported size of type for get_column_value");
+            }
+        } else if constexpr (std::is_floating_point_v<T>) {
+            return static_cast<T>(sqlite3_column_double(stmt, col));
+        } else if constexpr (is_vector_v<T>)
+        {
+            using ElementType = typename T::value_type;
+
+            // 确保只处理像 vector<uint8_t> 或 vector<char> 这样的字节容器
+            static_assert(sizeof(ElementType) == 1, "Only 1-byte element vectors are supported for BLOB");
+
+            const void* blob_ptr = sqlite3_column_blob(stmt, col);
+            int bytes = sqlite3_column_bytes(stmt, col);
+
+            if (blob_ptr && bytes > 0) {
+                const ElementType* start = static_cast<const ElementType*>(blob_ptr);
+                return T(start, start + bytes);
+            }
+            return T{};
+        } else
+        {
+            static_assert(0, "unsupported type for get_column_value");
+        }
+        return T{};
     }
 
-    template<>
-    inline long long get_column_value<long long>(sqlite3_stmt* stmt, int col)
+    inline void bind_parameter_null(sqlite3_stmt* stmt, int index)
     {
-        return sqlite3_column_int64(stmt, col);
+        sqlite3_bind_null(stmt, index);
     }
-
-    template<>
-    inline double get_column_value<double>(sqlite3_stmt* stmt, int col)
+    template<typename T>
+    std::enable_if_t<std::is_integral_v<T> && (sizeof(T) <=4)> bind_parameter(sqlite3_stmt* stmt, int index, const T& value)
     {
-        return sqlite3_column_double(stmt, col);
+        sqlite3_bind_int(stmt, index, static_cast<int>(value));
     }
-
-    template<>
-    inline std::string get_column_value<std::string>(sqlite3_stmt* stmt, int col)
+    template<typename T>
+    std::enable_if_t<std::is_integral_v<T> && (sizeof(T) ==8)> bind_parameter(sqlite3_stmt* stmt, int index, const T& value)
     {
-        const unsigned char* text = sqlite3_column_text(stmt, col);
-        return text ? reinterpret_cast<const char*>(text) : "";
+        sqlite3_bind_int64(stmt, index, static_cast<sqlite3_int64>(value));
+    }
+    template<typename T>
+    std::enable_if_t<std::is_integral_v<T> && sizeof(T)==1> bind_parameter(sqlite3_stmt* stmt, int index, const std::vector<T>& value)
+    {
+        sqlite3_bind_blob(stmt, index, value.data(), static_cast<int>(value.size()), SQLITE_TRANSIENT);
+    }
+    // template<typename T>
+    // void bind_parameter(sqlite3_stmt* stmt, int index, const T& value);
+    inline void bind_parameter(sqlite3_stmt* stmt, int index, const double& value)
+    {
+        sqlite3_bind_double(stmt, index, value);
+    }
+    inline void bind_parameter(sqlite3_stmt* stmt, int index, const float& value)
+    {
+        sqlite3_bind_double(stmt, index, static_cast<double>(value));
+    }
+    inline void bind_parameter(sqlite3_stmt* stmt, int index, const std::string& value)
+    {
+        sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT);
     }
 
     template<typename T>

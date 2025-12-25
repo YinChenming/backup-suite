@@ -408,5 +408,6 @@ bool WindowsDevice::set_file_attributes(const FileEntityMeta& meta) const
 }
 
 
-#elif defined __linux__
+#elif defined(__linux__)
+#elif defined(__APPLE__)
 #endif

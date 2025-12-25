@@ -10,7 +10,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#elif defined __linux__
+#elif defined(__linux__) || defined(__APPLE__)
 #include <unistd.h>
 #else
 #error "Unsupported platform"

@@ -8,6 +8,8 @@
 
 #include <chrono>
 #include <filesystem>
+#include <ctime>
+#include <cstdint>
 
 #include "api.h"
 

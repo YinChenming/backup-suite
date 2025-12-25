@@ -18,7 +18,8 @@ bool BACKUP_SUITE_API is_running_as_admin()
         CloseHandle(hToken);
     }
     return isAdmin;
-#elif defined __linux__
+#elif defined(__linux__)
     return geteuid() == 0;
+#elif defined(__APPLE__)
 #endif
 }

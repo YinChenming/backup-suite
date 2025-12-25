@@ -17,6 +17,11 @@
 #include "api.h"
 #include "filesystem/entities.h"
 #include "database.h"
+#include "utils/fs_deleter.h"
+
+using fs_deleter::FStreamDeleter;
+using fs_deleter::IFStreamPointer;
+using fs_deleter::OFStreamPointer;
 
 namespace tar
 {
@@ -135,28 +140,6 @@ namespace tar
         char block[512];
     };
 
-    template <typename T>
-    struct BACKUP_SUITE_API FStreamDeleter
-    {
-        virtual ~FStreamDeleter() = default;
-        using pointer = T*;
-
-        [[nodiscard]] virtual bool need_delete() const
-        {
-            return true;
-        }
-
-        void operator()(T* stream) const
-        {
-            if (stream && stream->is_open())
-            {
-                stream->close();
-            }
-            if (need_delete())
-                delete stream;
-        }
-    };
-
     class BACKUP_SUITE_API TarFile
     {
         class TarIstreamBuf: public std::streambuf
@@ -215,13 +198,10 @@ namespace tar
             ~TarIstream() override = default;
             FileEntityMeta get_meta() { return meta_; }
         };
-        using IFStreamPointer = std::unique_ptr<std::ifstream, FStreamDeleter<std::ifstream>>;
-        using OFStreamPointer = std::unique_ptr<std::ofstream, FStreamDeleter<std::ofstream>>;
 
         static constexpr int TarBlockSize = sizeof(TarBlock);   // 512 bytes
 
         db::Database db_;
-        std::filesystem::path path_;
         IFStreamPointer ifs_;
         OFStreamPointer ofs_;
         bool is_valid_ = true;
@@ -249,17 +229,17 @@ namespace tar
                 TarFile(path, TarMode::output, ifsDeleter, ofsDeleter);
             }
         }
-        TarFile(std::filesystem::path path, const TarMode mode, const FStreamDeleter<std::ifstream>& ifsDeleter = FStreamDeleter<std::ifstream>(),
+        TarFile(const std::filesystem::path& path, const TarMode mode, const FStreamDeleter<std::ifstream>& ifsDeleter = FStreamDeleter<std::ifstream>(),
                        const FStreamDeleter<std::ofstream>& ofsDeleter = FStreamDeleter<std::ofstream>()) :
-          db_(std::move(std::make_unique<TarInitializationStrategy>()).get()), path_(std::move(path)), ifs_(nullptr, ifsDeleter), ofs_(nullptr, ofsDeleter)
+          db_(std::move(std::make_unique<TarInitializationStrategy>()).get()), ifs_(nullptr, ifsDeleter), ofs_(nullptr, ofsDeleter)
         {
             if (mode == TarMode::input)
             {
-                ifs_ = IFStreamPointer(new std::ifstream(path_, std::ios::binary), FStreamDeleter<std::ifstream>());
+                ifs_ = IFStreamPointer(new std::ifstream(path, std::ios::binary), FStreamDeleter<std::ifstream>());
                 init_db_from_tar();
             } else
             {
-                ofs_ = OFStreamPointer(new std::ofstream(path_, std::ios::binary | std::ios::trunc), FStreamDeleter<std::ofstream>());
+                ofs_ = OFStreamPointer(new std::ofstream(path, std::ios::binary | std::ios::trunc), FStreamDeleter<std::ofstream>());
                 // Check if the file was successfully opened
                 if (!ofs_ || !ofs_->is_open())
                     is_valid_ = false;
@@ -272,7 +252,7 @@ namespace tar
 
         bool add_entity(ReadableFile& file);
         // 关闭文件流,在output模式中表示将数据写入文件中,在input模式中表示单纯的关闭文件流,应当在~TarFile()中自动调用
-        void close() const;
+        void close();
     };
 }
 #endif // TAR_H
