@@ -47,10 +47,10 @@ class BACKUP_SUITE_API Device
 public:
     static constexpr size_t CACHE_SIZE = 1024 * 1024;
     virtual ~Device() = default;
-    [[nodiscard]] virtual std::unique_ptr<Folder> get_folder(const std::filesystem::path &path) const = 0;
-    [[nodiscard]] virtual std::unique_ptr<ReadableFile> get_file(const std::filesystem::path &path) const = 0;
-    [[nodiscard]] virtual std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path &path) const = 0;
-    [[nodiscard]] virtual bool exists(const std::filesystem::path& path) const = 0;
+    [[nodiscard]] virtual std::unique_ptr<Folder> get_folder(const std::filesystem::path &path) = 0;
+    [[nodiscard]] virtual std::unique_ptr<ReadableFile> get_file(const std::filesystem::path &path) = 0;
+    [[nodiscard]] virtual std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path &path) = 0;
+    [[nodiscard]] virtual bool exists(const std::filesystem::path& path) = 0;
     virtual bool write_file(ReadableFile &file) = 0;
     virtual bool write_file_force(ReadableFile &file) = 0;
     virtual bool write_folder(Folder &folder) = 0;
@@ -61,7 +61,7 @@ class BACKUP_SUITE_API PhysicalDevice: public Device
 public:
     static constexpr size_t CACHE_SIZE = 1024 * 1024;
     ~PhysicalDevice() override = default;
-    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) const override;
+    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) override;
     [[nodiscard]] virtual std::unique_ptr<std::ifstream> get_file_stream(const std::filesystem::path& path) const = 0;
 };
 
@@ -73,19 +73,19 @@ public:
     DeviceDecorator() = default;
     explicit DeviceDecorator(const std::shared_ptr<Device> &device) : device(device) {}
     ~DeviceDecorator() override = default;
-    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path) const override
+    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path) override
     {
         return device->get_folder(path);
     }
-    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) const override
+    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) override
     {
         return device->get_file(path);
     }
-    [[nodiscard]] std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) const override
+    [[nodiscard]] std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) override
     {
         return device->get_meta(path);
     }
-    [[nodiscard]] bool exists(const std::filesystem::path& path) const override
+    [[nodiscard]] bool exists(const std::filesystem::path& path) override
     {
         if (!device->exists(path))
             return false;

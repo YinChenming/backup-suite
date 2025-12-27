@@ -63,10 +63,10 @@ public:
         : mode_(mode), tar_file_(path, mode == Mode::ReadOnly ? tar::TarFile::TarMode::input : tar::TarFile::TarMode::output)
     { }
 
-    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path) const override;
-    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) const override;
-    [[nodiscard]] std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) const override;
-    [[nodiscard]] bool exists(const std::filesystem::path& path) const override;
+    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path) override;
+    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) override;
+    [[nodiscard]] std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) override;
+    [[nodiscard]] bool exists(const std::filesystem::path& path) override;
     [[nodiscard]] bool is_open() const { return tar_file_.is_open(); }
     bool write_file(ReadableFile& file) override;
     bool write_file_force(ReadableFile& file) override;
@@ -92,28 +92,40 @@ public:
         WriteOnly
     };
 
-    explicit ZipDevice(const std::filesystem::path& path, const Mode mode = Mode::ReadOnly)
+    explicit ZipDevice(const std::filesystem::path& path, const Mode mode = Mode::ReadOnly,
+                       const std::vector<uint8_t>& password ={})
         : mode_(mode), zip_file_(path, mode == Mode::ReadOnly ? zip::ZipFile::ZipMode::input : zip::ZipFile::ZipMode::output)
-    { }
+    {
+        zip_file_.set_password(password);
+    }
 
-    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path) const override;
-    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) const override;
-    [[nodiscard]] std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) const override;
-    [[nodiscard]] bool exists(const std::filesystem::path& path) const override;
+    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path) override;
+    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) override;
+    [[nodiscard]] std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) override;
+    [[nodiscard]] bool exists(const std::filesystem::path& path) override;
     [[nodiscard]] bool is_open() const { return zip_file_.is_open(); }
     bool write_file(ReadableFile& file) override;
-    bool write_file(ReadableFile& file, zip::header::ZipCompressionMethod compression_method);
+    bool write_file(ReadableFile& file, zip::header::ZipCompressionMethod compression_method, zip::header::ZipEncryptionMethod encryption_method);
     bool write_file_force(ReadableFile& file) override;
     bool write_folder(Folder& folder) override;
     void close()
     {
         zip_file_.close();
     }
+    void set_password(const std::vector<uint8_t>& password)
+    {
+        zip_file_.set_password(password);
+    }
+    void set_encryption_method(zip::header::ZipEncryptionMethod method)
+    {
+        encryption_method_ = method;
+    }
 
 private:
     Mode mode_;
     zip::ZipFile zip_file_;
     zip::header::ZipCompressionMethod compression_method_ = zip::header::ZipCompressionMethod::Store;
+    zip::header::ZipEncryptionMethod encryption_method_ = zip::header::ZipEncryptionMethod::Unknown;
 
     [[nodiscard]] std::vector<zip::ZipFile::CentralDirectoryEntry> list_all_files() const;
 };

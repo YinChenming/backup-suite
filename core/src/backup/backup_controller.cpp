@@ -3,7 +3,7 @@
 //
 #include "backup/backup_controller.h"
 
-void BackupController::run_backup(const Device &from, Device &to) const
+void BackupController::run_backup(Device& from, Device& to) const
 {
     std::queue<std::unique_ptr<Folder>> queue;
     queue.push(from.get_folder(""));
@@ -28,7 +28,15 @@ void BackupController::run_backup(const Device &from, Device &to) const
             std::unique_ptr<ReadableFile> tmp_file = from.get_file(meta.path);
             if (!tmp_file)
                 continue;
-            to.write_file(*tmp_file);
+            if (tmp_file->get_meta().type == FileEntityType::Directory)
+            {
+                Folder tmp_folder{tmp_file->get_meta(), {}};
+                to.write_folder(tmp_folder);
+            }
+            else
+            {
+                to.write_file(*tmp_file);
+            }
             tmp_file->close();
         }
     }

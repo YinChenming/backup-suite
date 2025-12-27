@@ -37,21 +37,21 @@ class BACKUP_SUITE_API WindowsDevice final : public PhysicalDevice
 public:
     explicit WindowsDevice(std::filesystem::path path): root(std::move(path)) {}
     [[nodiscard]] std::filesystem::path get_root() const { return root; }
-    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path) const override
+    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path) override
     {
         return get_folder(path, false);
     }
-    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path, bool recursion) const;
-    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) const override;
+    [[nodiscard]] std::unique_ptr<Folder> get_folder(const std::filesystem::path& path, bool recursion);
+    [[nodiscard]] std::unique_ptr<ReadableFile> get_file(const std::filesystem::path& path) override;
     [[nodiscard]] std::unique_ptr<std::ifstream> get_file_stream(const std::filesystem::path& path) const override;
-    [[nodiscard]] std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) const override;
-    [[nodiscard]] bool exists(const std::filesystem::path& path) const override;
+    [[nodiscard]] std::unique_ptr<FileEntityMeta> get_meta(const std::filesystem::path& path) override;
+    [[nodiscard]] bool exists(const std::filesystem::path& path) override;
     bool write_file(ReadableFile&) override;
     bool write_file_force(ReadableFile &file) override;
     bool write_folder(Folder &folder) override;
 protected:
-    bool _write_file(ReadableFile &file, bool force) const;
-    [[nodiscard]] bool set_file_attributes(const FileEntityMeta &meta) const;
+    bool _write_file(ReadableFile &file, bool force);
+    [[nodiscard]] bool set_file_attributes(const FileEntityMeta &meta);
     static std::wstring sid2name(const PSID sid) {
         if (!sid) {
             return L"";

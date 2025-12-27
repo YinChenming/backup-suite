@@ -7,9 +7,15 @@
 
 #include <cstdint>
 
+#include "api.h"
+
 namespace crc
 {
-    uint32_t crc32(const char* data, size_t length);
+    BACKUP_SUITE_API uint32_t crc32(const char* data, size_t length);
+    /*
+     * for Zip Encrypto
+     */
+    BACKUP_SUITE_API uint32_t crc32_update(uint32_t crc, uint8_t data);
 }
 
 #endif // BACKUPSUITE_CRC32_H

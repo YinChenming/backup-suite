@@ -3,7 +3,7 @@
 //
 #include "filesystem/device.h"
 
-std::unique_ptr<ReadableFile> PhysicalDevice::get_file(const std::filesystem::path& path) const
+std::unique_ptr<ReadableFile> PhysicalDevice::get_file(const std::filesystem::path& path)
 {
     const auto meta = get_meta(path);
     if (!meta || meta->type != FileEntityType::RegularFile)

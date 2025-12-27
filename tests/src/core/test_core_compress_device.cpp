@@ -92,6 +92,46 @@ TEST_F(TestSystemDevice, TestZipDevice)
         EXPECT_FALSE(read_zip_device.exists("nonexistent_file.txt"));
     }
 }
+TEST_F(TestSystemDevice, TestZipEncDevice)
+{
+    const auto tmp_zip_file = TmpFile::create();
+    GTEST_LOG_(INFO) << "TestZipDevice tmp zip path: " << tmp_zip_file->path() << "\n";
+    std::vector<uint8_t> password = {'p', 'a', 's', 's', 'w', 'o', 'r', 'd'};
+    // 首先创建一个zip备份文件
+    {
+        ZipDevice zip_device(tmp_zip_file->path(), ZipDevice::Mode::WriteOnly, password);
+        zip_device.set_encryption_method(zip::header::ZipEncryptionMethod::ZipCrypto);
+        BackupController controller{};
+        controller.run_backup(device, zip_device);
+    }
+
+    // 现在测试只读ZipDevice
+    {
+        ZipDevice read_zip_device(tmp_zip_file->path(), ZipDevice::Mode::ReadOnly, password);
+        read_zip_device.set_encryption_method(zip::header::ZipEncryptionMethod::ZipCrypto);
+        EXPECT_TRUE(read_zip_device.is_open());
+
+        // 测试获取文件 - 使用正确的路径
+        auto test_file = read_zip_device.get_file(test_folder / "test_file.txt");
+        EXPECT_NE(test_file, nullptr);
+
+        // 读取文件内容
+        auto content = test_file->read();
+        ASSERT_NE(content, nullptr);
+        std::string file_content(reinterpret_cast<char*>(content->data()), content->size());
+        GTEST_LOG_(INFO) << "Read file 'test_folder/test_file.txt' content: " << file_content << "\n";
+        EXPECT_EQ(file_content, test_file_content);
+
+        // 测试获取目录
+        auto folder = read_zip_device.get_folder(test_folder);
+        EXPECT_NE(folder, nullptr);
+
+        // 测试文件存在性
+        EXPECT_TRUE(read_zip_device.exists(test_folder / "test_file.txt"));
+        EXPECT_TRUE(read_zip_device.exists(test_folder));
+        EXPECT_FALSE(read_zip_device.exists("nonexistent_file.txt"));
+    }
+}
 TEST_F(TestSystemDevice, TestBackupFromPhysicalToTar)
 {
     const auto tmp_tar_file = TmpFile::create();

@@ -21,7 +21,7 @@ std::vector<std::pair<FileEntityMeta, int>> TarDevice::list_all_files() const
 
     return result;
 }
-std::unique_ptr<Folder> TarDevice::get_folder(const std::filesystem::path& path) const
+std::unique_ptr<Folder> TarDevice::get_folder(const std::filesystem::path& path)
 {
     if (!tar_file_.is_open() || mode_ != Mode::ReadOnly) {
         return nullptr;
@@ -68,7 +68,7 @@ std::unique_ptr<Folder> TarDevice::get_folder(const std::filesystem::path& path)
     }
     return std::make_unique<Folder>(meta, children);
 }
-std::unique_ptr<ReadableFile> TarDevice::get_file(const std::filesystem::path& path) const
+std::unique_ptr<ReadableFile> TarDevice::get_file(const std::filesystem::path& path)
 {
     if (!is_open() || mode_ != Mode::ReadOnly) {
         return nullptr;
@@ -83,7 +83,7 @@ std::unique_ptr<ReadableFile> TarDevice::get_file(const std::filesystem::path& p
     }
     return std::make_unique<TarIstreamReadableFile>(file_stream->get_meta(), std::move(file_stream));
 }
-std::unique_ptr<FileEntityMeta> TarDevice::get_meta(const std::filesystem::path& path) const
+std::unique_ptr<FileEntityMeta> TarDevice::get_meta(const std::filesystem::path& path)
 {
     if (!is_open() || mode_ != Mode::ReadOnly) {
         return nullptr;
@@ -97,7 +97,7 @@ std::unique_ptr<FileEntityMeta> TarDevice::get_meta(const std::filesystem::path&
         return nullptr;
     }
 }
-bool TarDevice::exists(const std::filesystem::path& path) const
+bool TarDevice::exists(const std::filesystem::path& path)
 {
     auto meta = get_meta(path);
     return meta != nullptr;
@@ -134,7 +134,7 @@ std::vector<zip::ZipFile::CentralDirectoryEntry> ZipDevice::list_all_files() con
     }
     return zip_file_.list_dir({});
 }
-std::unique_ptr<Folder> ZipDevice::get_folder(const std::filesystem::path& path) const
+std::unique_ptr<Folder> ZipDevice::get_folder(const std::filesystem::path& path)
 {
     if (!is_open() || mode_ != Mode::ReadOnly) {
         return nullptr;
@@ -181,7 +181,7 @@ std::unique_ptr<Folder> ZipDevice::get_folder(const std::filesystem::path& path)
     }
     return std::make_unique<Folder>(meta, children);
 }
-std::unique_ptr<ReadableFile> ZipDevice::get_file(const std::filesystem::path& path) const
+std::unique_ptr<ReadableFile> ZipDevice::get_file(const std::filesystem::path& path)
 {
     if (!is_open() || mode_ != Mode::ReadOnly) {
         return nullptr;
@@ -196,7 +196,7 @@ std::unique_ptr<ReadableFile> ZipDevice::get_file(const std::filesystem::path& p
     }
     return std::make_unique<ZipIstreamReadableFile>(file_stream->get_meta(), std::move(file_stream));
 }
-std::unique_ptr<FileEntityMeta> ZipDevice::get_meta(const std::filesystem::path& path) const
+std::unique_ptr<FileEntityMeta> ZipDevice::get_meta(const std::filesystem::path& path)
 {
     if (!is_open() || mode_ != Mode::ReadOnly) {
         return nullptr;
@@ -206,21 +206,21 @@ std::unique_ptr<FileEntityMeta> ZipDevice::get_meta(const std::filesystem::path&
     if (stream == nullptr) return nullptr;
     else return std::make_unique<FileEntityMeta>(stream->get_meta());
 }
-bool ZipDevice::exists(const std::filesystem::path& path) const
+bool ZipDevice::exists(const std::filesystem::path& path)
 {
     const auto meta = get_meta(path);
     return meta != nullptr;
 }
-bool ZipDevice::write_file(ReadableFile& file, zip::header::ZipCompressionMethod compression_method)
+bool ZipDevice::write_file(ReadableFile& file, const zip::header::ZipCompressionMethod compression_method, const zip::header::ZipEncryptionMethod encryption_method)
 {
     if (!is_open() || mode_ != Mode::WriteOnly) {
         return false;
     }
-    return zip_file_.add_entity(file, compression_method);
+    return zip_file_.add_entity(file, compression_method, encryption_method_);
 }
 bool ZipDevice::write_file(ReadableFile& file)
 {
-    return write_file(file, compression_method_);
+    return write_file(file, compression_method_, encryption_method_);
 }
 bool ZipDevice::write_file_force(ReadableFile& file)
 {

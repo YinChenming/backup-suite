@@ -8,7 +8,7 @@
 #include <vector>
 #include <cstdint>
 
-#include "utils/bstream.h"
+#include "utils/streams.h"
 
 namespace compress::huffman
 {

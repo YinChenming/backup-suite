@@ -54,12 +54,16 @@ static constexpr uint32_t crc32_table[256] = {
 };
 
 // CRC32 计算
-uint32_t crc32(const char* data, size_t length) {
+uint32_t crc32(const char* data, const size_t length) {
     uint32_t crc = 0xFFFFFFFF;
     for (size_t i = 0; i < length; ++i) {
         crc = (crc >> 8) ^ crc32_table[(crc ^ data[i]) & 0xFF];
     }
     return crc ^ 0xFFFFFFFF;
+}
+uint32_t crc32_update(uint32_t crc, uint8_t data)
+{
+    return (crc >> 8) ^ crc32_table[(crc ^ data) & 0xFF];
 }
 
 }

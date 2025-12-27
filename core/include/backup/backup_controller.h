@@ -24,7 +24,7 @@ public:
     BackupController() = default;
     // ReSharper disable once CppNonExplicitConvertingConstructor
     BackupController(const BackupConfig& cfg): config(cfg) {} // NOLINT(*-explicit-constructor)
-    void run_backup(const Device &from, Device &to) const;
+    void run_backup(Device& from, Device& to) const;
 };
 
 #endif // BACKUPSUITE_BACKUP_CONTROLLER_H
