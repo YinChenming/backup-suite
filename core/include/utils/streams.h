@@ -6,6 +6,7 @@
 #define BACKUPSUITE_BSTREAM_H
 
 #include <iostream>
+#include <utility>
 #include <filesystem/entities.h>
 
 #include "api.h"
@@ -162,7 +163,7 @@ public:
             return traits_type::to_int_type(*gptr());
         }
         file_.seekg(offset_, std::ios::beg);
-        size_t to_read = std::min(buffer_size_, size_);
+        const size_t to_read = std::min(buffer_size_, size_);
         if (!file_.read(buffer_, to_read))
         {
             return traits_type::eof();
@@ -180,14 +181,15 @@ public:
 class BACKUP_SUITE_API FileEntityIstream: public std::istream
 {
     FileEntityMeta meta_;
-    std::ifstream &file_;
     std::unique_ptr<IstreamBuf> buffer_;
 public:
     FileEntityIstream(std::ifstream &ifs, const int offset, const FileEntityMeta &meta):
-        std::istream(nullptr), meta_(meta), file_(ifs), buffer_(std::make_unique<IstreamBuf>(ifs, offset, meta.size))
+        FileEntityIstream(std::make_unique<IstreamBuf>(ifs, offset, meta.size), meta)
+    { }
+    FileEntityIstream(std::unique_ptr<IstreamBuf> &&ifs, FileEntityMeta meta) : std::istream(nullptr), buffer_(std::move(ifs)), meta_(std::move(meta))
     {
         rdbuf(buffer_.get());
-        if (!meta_.size || !ifs.is_open() || ifs.eof())
+        if (!meta_.size)
         {
             setstate(std::ios::eofbit);
         }

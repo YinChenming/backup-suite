@@ -5,13 +5,16 @@
 #include "utils/zip.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <iomanip>
-#include <utility>
 #include <iostream>
-#include <chrono>
+#include <random>
+#include <utility>
 
+#include "encryption/rc.h"
+#include "encryption/zip_crypto.h"
 #include "utils/crc.h"
 #include "utils/endian.h"
 
@@ -191,6 +194,40 @@ static uint32_t time_point_to_unix_u32(const std::chrono::system_clock::time_poi
             time_point.time_since_epoch()
         ).count()
     );
+}
+// 将SQLZipEntity转换为FileEntityMeta
+static FileEntityMeta sql_zip_entity2file_meta(const db::ZipInitializationStrategy::SQLZipEntity& entity)
+{
+    auto [version_made_by, version_needed, general_purpose, compression_method, last_modified, crc32, compressed_size, uncompressed_size, disk_number, internal_attributes, external_attributes, local_header_offset, filename, extra_field, file_comment] = entity;
+
+    // 根据外部属性判断文件类型
+    FileEntityType type = FileEntityType::RegularFile;
+    if (external_attributes & 0x40000000) { // S_IFDIR
+        type = FileEntityType::Directory;
+    } else if (external_attributes & 0xA0000000) { // S_IFLNK
+        type = FileEntityType::SymbolicLink;
+    }
+
+    // 创建FileEntityMeta
+    FileEntityMeta meta = {
+        std::filesystem::path(filename),
+        type,
+        static_cast<size_t>(uncompressed_size),
+        std::chrono::system_clock::from_time_t(static_cast<time_t>(last_modified)),
+        std::chrono::system_clock::from_time_t(static_cast<time_t>(last_modified)),
+        std::chrono::system_clock::from_time_t(static_cast<time_t>(last_modified)),
+        0, // posix_mode
+        0, // uid
+        0, // gid
+        "", // user_name
+        "", // group_name
+        static_cast<uint32_t>(external_attributes),
+        "", // symbolic_link_target
+        0, // device_major
+        0  // device_minor
+    };
+
+    return meta;
 }
 
 // 析构函数
@@ -402,10 +439,12 @@ bool ZipFile::insert_entity(const ZipCentralDirectoryFileHeader* cdfh, const std
 }
 
 // 添加实体到zip归档
-bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_method) {
+bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_method, ZipEncryptionMethod encryption_method) {
     if (!is_valid_) {
         return false;
     }
+    std::random_device rd;
+    std::mt19937 rand(rd());
 
     // 获取文件元数据
     auto meta = file.get_meta();
@@ -485,7 +524,23 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
     // 写入本地文件头
     ZipLocalFileHeader local_header { (ZipFileHeaderSignature::LocalFile), (ZipVersionNeeded::Version20) };
     // 设置版本需要
-    // 这里暂时就用20就够了，等到实现加密的时候再说
+    // 2.0 - File is encrypted using traditional PKWARE encryption
+    if (encryption_method == ZipEncryptionMethod::ZipCrypto)
+    {
+        if (static_cast<uint16_t>(local_header.version_needed) < static_cast<uint16_t>(ZipVersionNeeded::Version20))
+        {
+            local_header.version_needed = ZipVersionNeeded::Version20;
+        }
+    }
+    // 5.0 - File is encrypted using RC4 encryption
+    if (encryption_method == ZipEncryptionMethod::RC4)
+    {
+        if (static_cast<uint16_t>(local_header.version_needed) < static_cast<uint16_t>(ZipVersionNeeded::Version50))
+        {
+            local_header.version_needed = ZipVersionNeeded::Version50;
+        }
+    }
+
     local_header.general_purpose = (static_cast<uint16_t>(ZipGeneralPurposeBitFlag::Utf8Encoding));
     local_header.compression_method = (compression_method);
     // 设置时间戳
@@ -501,7 +556,21 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
     // 文件名长度
     local_header.file_name_length = (static_cast<uint16_t>(filename.size()));
     // 扩展字段长度
-    local_header.extra_field_length = extra_field.size(); // 暂不使用扩展字段
+    local_header.extra_field_length = extra_field.size();
+
+    // 设置加密相关信息
+    if (encryption_method == ZipEncryptionMethod::ZipCrypto)
+    {
+        // 开头写入12字节的头
+        local_header.compressed_size += 12;
+        local_header.general_purpose |= static_cast<uint16_t>(ZipGeneralPurposeBitFlag::Encrypted);
+        local_header.general_purpose &= ~static_cast<uint16_t>(ZipGeneralPurposeBitFlag::StrongEncryption);
+    }
+    else if (encryption_method == ZipEncryptionMethod::RC4)
+    {
+        local_header.general_purpose |= static_cast<uint16_t>(ZipGeneralPurposeBitFlag::Encrypted);
+        local_header.general_purpose |= static_cast<uint16_t>(ZipGeneralPurposeBitFlag::StrongEncryption);
+    }
 
     lfh_host_to_le(local_header);
     ofs_->write(reinterpret_cast<const char*>(&local_header), sizeof(local_header));
@@ -516,17 +585,72 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
 
     // 写入文件内容并计算CRC32
     uint32_t crc32 = 0;
+    crc::CRC32 crc32_inst;
     uint32_t compressed_size = 0;
+    encryption::ZipCrypto zip_crypto(password_);
+    encryption::RC4 rc4_encryptor{};
+
+    if (encryption_method == ZipEncryptionMethod::ZipCrypto)
+    {
+        std::uniform_int_distribution<uint16_t> dist(0, 255);
+        // 避免二次写入,这里直接用 last_mod_time 字段写入头
+        for (int i=0; i<11; i++)
+        {
+            uint8_t bit = zip_crypto.encrypt(dist(rand));
+            ofs_->write(reinterpret_cast<const char*>(&bit), 1);
+        }
+        uint8_t last_bit = zip_crypto.encrypt((local_header.last_mod_time>>8) & 0xff);
+        ofs_->write(reinterpret_cast<const char*>(&last_bit), 1);
+        compressed_size += 12;
+    } else if (encryption_method == ZipEncryptionMethod::RC4)
+    {
+        std::vector rc4_pwd{password_};
+        if (rc4_pwd.size() < 32)
+        {
+            rc4_pwd.resize(32, 0);
+        } else if (rc4_pwd.size() > 448)
+        {
+            rc4_pwd.resize(448);
+        }
+        rc4_encryptor = encryption::RC4(rc4_pwd);
+
+        DecryptionHeaderRecord rc4_dec_header {
+            {},
+            3,
+            ZipEncryptionMethod::RC4,
+            rc4_encryptor.bit_len(),
+            1,
+            {}, {}, {}
+        };
+    }
 
     // 使用ReadableFile的read(size)方法读取文件内容
     if (compression_method == ZipCompressionMethod::Store)
     {
         std::unique_ptr<std::vector<std::byte>> buffer;
         while (((buffer = file.read(4096))) && buffer && !buffer->empty()) {
-            // 目前使用存储模式，不压缩
-            ofs_->write(reinterpret_cast<const char*>(buffer->data()), buffer->size());
-            crc32 = crc::crc32(reinterpret_cast<const char*>(buffer->data()), buffer->size());
+            crc32_inst.update(buffer->data(), buffer->size());
             compressed_size += static_cast<uint32_t>(buffer->size());
+            // 目前使用存储模式，不压缩
+            if (encryption_method == ZipEncryptionMethod::ZipCrypto)
+            {
+                for (const auto c : *buffer)
+                {
+                    uint8_t bit = zip_crypto.encrypt(static_cast<uint8_t>(c));
+                    ofs_->write(reinterpret_cast<const char*>(&bit), 1);
+                }
+            } else if (encryption_method == ZipEncryptionMethod::RC4)
+            {
+                for (const auto c : *buffer)
+                {
+                    uint8_t bit = rc4_encryptor.encrypt(static_cast<uint8_t>(c));
+                    ofs_->write(reinterpret_cast<const char*>(&bit), 1);
+                }
+            }
+            else
+            {
+                ofs_->write(reinterpret_cast<const char*>(buffer->data()), buffer->size());
+            }
         }
     } else
     {
@@ -535,6 +659,7 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
     }
 
     // 回写CRC32和压缩大小到本地文件头
+    crc32 = crc32_inst.finalize();
     const auto file_end_pos = ofs_->tellp();
     ofs_->seekp(local_header_offset + offsetof(ZipLocalFileHeader, crc32));
     crc32 = htole32(crc32);
@@ -544,6 +669,22 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
     ofs_->write(reinterpret_cast<const char*>(&compressed_size), sizeof(compressed_size));
     compressed_size = htole32(compressed_size);
     ofs_->seekp(file_end_pos);
+
+    // Extra Field 0x0017 in central header only.
+    // see https://pkwaredownloads.blob.core.windows.net/pkware-general/Documentation/APPNOTE-6.3.9.TXT
+    // Only deal with encryption method we support here.
+    if (encryption_method == ZipEncryptionMethod::RC4)
+    {
+        std::vector<uint8_t> rc4_extra_field;
+        rc4_extra_field.resize(12, 0);
+        *reinterpret_cast<uint16_t*>(&rc4_extra_field[0]) = htole16(0x0017);
+        *reinterpret_cast<uint16_t*>(&rc4_extra_field[2]) = htole16(8);
+        *reinterpret_cast<uint16_t*>(&rc4_extra_field[4]) = htole16(2); // format = 2
+        *reinterpret_cast<uint16_t*>(&rc4_extra_field[6]) = htole16(static_cast<uint16_t>(ZipEncryptionMethod::RC4));
+        *reinterpret_cast<uint16_t*>(&rc4_extra_field[8]) = htole16(rc4_encryptor.bit_len());
+        *reinterpret_cast<uint16_t*>(&rc4_extra_field[10]) = htole16(1); // flags
+        extra_field.insert(extra_field.end(), rc4_extra_field.begin(), rc4_extra_field.end());
+    }
 
     // 将文件元数据插入到数据库中
     // 这里不涉及到大小端序问题，因为我们存储的是原始值
@@ -580,6 +721,7 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
 ZipFile::CentralDirectoryEntry ZipFile::sql_entity_to_cdfh(const db::ZipInitializationStrategy::SQLZipEntity& entity)
 {
     auto [version_made_by, version_needed, general_purpose, compression_method, last_modified, crc32, compressed_size, uncompressed_size, disk_number, internal_attributes, external_attributes, local_header_offset, filename, extra_field, file_comment] = entity;
+    const auto [last_mod_date, last_mod_time] = unix_time_to_dos(static_cast<time_t>(last_modified));
     const CentralDirectoryEntry entry = {
         filename,
         extra_field,
@@ -591,8 +733,8 @@ ZipFile::CentralDirectoryEntry ZipFile::sql_entity_to_cdfh(const db::ZipInitiali
             static_cast<ZipVersionNeeded>(version_needed),
             general_purpose,
             static_cast<ZipCompressionMethod>(compression_method),
-            0, // last_mod_time
-            0, // last_mod_date
+            last_mod_time,
+            last_mod_date,
             crc32,
             compressed_size,
             uncompressed_size,
@@ -606,40 +748,6 @@ ZipFile::CentralDirectoryEntry ZipFile::sql_entity_to_cdfh(const db::ZipInitiali
         }
     };
     return entry;
-}
-// 辅助函数：将SQLZipEntity转换为FileEntityMeta
-static FileEntityMeta sql_zip_entity2file_meta(const db::ZipInitializationStrategy::SQLZipEntity& entity)
-{
-    auto [version_made_by, version_needed, general_purpose, compression_method, last_modified, crc32, compressed_size, uncompressed_size, disk_number, internal_attributes, external_attributes, local_header_offset, filename, extra_field, file_comment] = entity;
-
-    // 根据外部属性判断文件类型
-    FileEntityType type = FileEntityType::RegularFile;
-    if (external_attributes & 0x40000000) { // S_IFDIR
-        type = FileEntityType::Directory;
-    } else if (external_attributes & 0xA0000000) { // S_IFLNK
-        type = FileEntityType::SymbolicLink;
-    }
-
-    // 创建FileEntityMeta
-    FileEntityMeta meta = {
-        std::filesystem::path(filename),
-        type,
-        static_cast<size_t>(uncompressed_size),
-        std::chrono::system_clock::from_time_t(static_cast<time_t>(last_modified)),
-        std::chrono::system_clock::from_time_t(static_cast<time_t>(last_modified)),
-        std::chrono::system_clock::from_time_t(static_cast<time_t>(last_modified)),
-        0, // posix_mode
-        0, // uid
-        0, // gid
-        "", // user_name
-        "", // group_name
-        static_cast<uint32_t>(external_attributes),
-        "", // symbolic_link_target
-        0, // device_major
-        0  // device_minor
-    };
-
-    return meta;
 }
 
 // 实现list_dir方法
@@ -681,7 +789,7 @@ std::vector<ZipFile::CentralDirectoryEntry> ZipFile::list_dir(const std::filesys
 }
 
 // 实现get_file_stream方法
-std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesystem::path& path) const
+std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesystem::path& path)
 {
     if (!is_valid_ || !ifs_ || !ifs_->is_open())
     {
@@ -714,26 +822,148 @@ std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesys
     sqlite3_bind_text(stmt.get(), 1, reinterpret_cast<const char*>(path_str.c_str()), -1, SQLITE_TRANSIENT);
 
     std::unique_ptr<ZipIstream> zip_stream;
+    db::ZipInitializationStrategy::SQLZipEntity entity;
+    CentralDirectoryEntry cdfh;
     try
     {
-        const auto entity = db_.query_one<db::ZipInitializationStrategy::SQLZipEntity>(std::move(stmt));
-        const auto cdfh = sql_entity_to_cdfh(entity);
-        ZipLocalFileHeader lfh;
-        ifs_->seekg(cdfh.record.local_header_offset, std::ios::beg);
-        ifs_->read(reinterpret_cast<char*>(&lfh), sizeof(ZipLocalFileHeader));
-        if (ifs_->gcount() != sizeof(ZipLocalFileHeader) || le32toh(lfh.signature) != ZipFileHeaderSignature::LocalFile)
-        {
-            return nullptr;
-        }
-        // 从小端序中转换
-        lfh_le_to_host(lfh);
-        size_t real_offset = cdfh.record.local_header_offset + sizeof(lfh) + lfh.file_name_length + lfh.extra_field_length;
-        auto meta = sql_zip_entity2file_meta(entity);
-        zip_stream = std::make_unique<ZipIstream>(*ifs_.get(), real_offset, meta);
+        entity = db_.query_one<db::ZipInitializationStrategy::SQLZipEntity>(std::move(stmt));
+        cdfh = sql_entity_to_cdfh(entity);
     } catch (const std::exception& e)
     {
         return nullptr;
     }
+    ZipLocalFileHeader lfh;
+    ifs_->seekg(cdfh.record.local_header_offset, std::ios::beg);
+    ifs_->read(reinterpret_cast<char*>(&lfh), sizeof(ZipLocalFileHeader));
+    if (ifs_->gcount() != sizeof(ZipLocalFileHeader) || le32toh(lfh.signature) != ZipFileHeaderSignature::LocalFile)
+    {
+        return nullptr;
+    }
+    // 从小端序中转换
+    lfh_le_to_host(lfh);
+    size_t real_offset = cdfh.record.local_header_offset + sizeof(lfh) + lfh.file_name_length + lfh.extra_field_length;
+    auto meta = sql_zip_entity2file_meta(entity);
+    std::unique_ptr<ZipIstreamBuf> stream_buf = nullptr;
+
+    if (lfh.general_purpose & static_cast<uint16_t>(ZipGeneralPurposeBitFlag::Encrypted))
+    {
+        do
+        {
+            auto encryption_method = ZipEncryptionMethod::Unknown;
+            if (lfh.general_purpose & static_cast<uint16_t>(ZipGeneralPurposeBitFlag::StrongEncryption))
+            {
+                const auto extra_field_list = get_extra_field_list(cdfh.extra_field);
+                for (const auto& field: extra_field_list)
+                {
+                    encryption_method = get_encryption_method(field).alg_id;
+                    if (encryption_method != ZipEncryptionMethod::Unknown)
+                    {
+                        break;
+                    }
+                }
+            } else
+            {
+                encryption_method = ZipEncryptionMethod::ZipCrypto;
+            }
+            if (encryption_method == ZipEncryptionMethod::Unknown && cdfh.record.compression_method == ZipCompressionMethod::AES_Encryption) {
+                encryption_method = ZipEncryptionMethod::AES256;
+            }
+
+            if (encryption_method == ZipEncryptionMethod::ZipCrypto)
+            {
+                // 解密头12个字节,判断是否与 CRC 相符
+                encryption::ZipCrypto decoder{password_};
+                uint8_t zip_crypto_header[12];
+                ifs_->seekg(real_offset, std::ios::beg);
+                ifs_->read(reinterpret_cast<char*>(zip_crypto_header), 12);
+                for (int i=0; i<12; i++)
+                {
+                    zip_crypto_header[i] = decoder.decrypt(zip_crypto_header[i]);
+                }
+                //  After the header is decrypted, the last 1 or 2 bytes in Buffer
+                // SHOULD be the high-order word/byte of the CRC for the file being
+                // decrypted, stored in Intel low-byte/high-byte order.  Versions of
+                // PKZIP prior to 2.0 used a 2 byte CRC check; a 1 byte CRC check is
+                // used on versions after 2.0.
+                // see https://pkwaredownloads.blob.core.windows.net/pkware-general/Documentation/APPNOTE-6.3.9.TXT
+                // check highest bit of CRC
+                if (static_cast<uint8_t>((lfh.crc32 >> 24) & 0xFF) == zip_crypto_header[11])
+                {
+                    if (uint16_t version_needed = static_cast<uint16_t>(lfh.version_needed);
+                        version_needed >= 20 && version_needed < 30)
+                    {
+                        if (static_cast<uint8_t>((lfh.crc32 >> 16) & 0xFF) == zip_crypto_header[10])
+                        {
+                            stream_buf = std::make_unique<ZipCryptoIstreamBuf>(*ifs_.get(), decoder, real_offset + 12, meta.size);  // meta.size 使用的是 uncompression_size
+                            break;
+                        }
+                    } else
+                    {
+                        stream_buf = std::make_unique<ZipCryptoIstreamBuf>(*ifs_.get(), decoder, real_offset + 12, meta.size);  // meta.size 使用的是 uncompression_size
+                        break;
+                    }
+                }
+                // 使用 last_mod_time 的高16位二次判断
+                if (static_cast<uint8_t>((lfh.last_mod_time >> 8) & 0xFF) == zip_crypto_header[11])
+                {
+                    stream_buf = std::make_unique<ZipCryptoIstreamBuf>(*ifs_.get(), decoder, real_offset + 12, meta.size);  // meta.size 使用的是 uncompression_size
+                } else
+                {
+                    invalid_password_ = true;
+                    break;
+                }
+            }
+            else if (lfh.general_purpose & static_cast<uint16_t>(ZipGeneralPurposeBitFlag::StrongEncryption))
+            {
+                // 设置了 StrongEncryption bit 后在文件前要插入一段 decryption header record 校验密码是否正确
+                const size_t de_header_offset = ifs_->tellg();
+                if (const auto de_header = get_decryption_header(*ifs_.get()); !de_header.format)
+                {
+                    break;
+                } else
+                {
+                    const size_t de_header_size = static_cast<size_t>(ifs_->tellg()) - de_header_offset;
+                    if (encryption_method == ZipEncryptionMethod::Unknown)
+                    {
+                        encryption_method = de_header.alg_id;
+                    }
+                    if (encryption_method == ZipEncryptionMethod::Unknown || encryption_method == ZipEncryptionMethod::ZipCrypto)
+                    {
+                        break;
+                    }
+                    if (encryption_method == ZipEncryptionMethod::RC4)
+                    {
+                        std::vector rc4_pwd(password_);
+                        rc4_pwd.resize(de_header.bit_len);
+                        std::vector de_data(de_header.v_data);
+                        encryption::RC4 rc4_decoder(rc4_pwd);
+                        rc4_decoder.process(de_data.data(), de_data.size());
+                        // 校验密码是否正确
+                        if (crc::crc32(reinterpret_cast<const char*>(de_data.data()), de_data.size())
+                            != de_header.v_crc32)
+                        {
+                            invalid_password_ = true;
+                            break;
+                        }
+                        stream_buf = std::make_unique<RC4IstreamBuf>(*ifs_.get(), rc4_decoder, real_offset + de_header_size, meta.size);
+                    } else break;
+                }
+            }
+            else
+            {
+                break;
+            }
+        } while (false);
+        if (!stream_buf)
+        {
+            stream_buf = std::make_unique<ZipIstreamBuf>(*ifs_.get(), 0, 0);
+        }
+    } else
+    {
+        stream_buf = std::make_unique<ZipIstreamBuf>(*ifs_.get(), real_offset, meta.size);
+    }
+
+    zip_stream = std::make_unique<ZipIstream>(std::move(stream_buf), meta);
     return zip_stream;
 }
 
@@ -801,7 +1031,6 @@ void ZipFile::close() {
     ofs_->close();
     is_valid_ = false;
 }
-
 FileEntityMeta ZipFile::cdfh_to_file_meta(const CentralDirectoryEntry& cdfh)
 {
     FileEntityMeta meta {
@@ -881,11 +1110,31 @@ FileEntityMeta ZipFile::cdfh_to_file_meta(const CentralDirectoryEntry& cdfh)
     update_file_entity_meta(meta);
     return meta;
 }
-// 扩展字段结构根据ZIP标准生成
-// https://pkwaredownloads.blob.core.windows.net/pkware-general/Documentation/APPNOTE-6.3.9.TXT
+const std::vector<std::vector<uint8_t>> &ZipFile::get_extra_field_list(const std::vector<uint8_t>& extra_field)
+{
+    std::vector<std::vector<uint8_t>> extra_fields;
+    for (size_t i = 0; i + 4 < extra_field.size();)
+    {
+        const uint16_t length = le16toh(*reinterpret_cast<const uint16_t*>(&extra_field[i+2]));
+        if (i + 4 + length > extra_field.size()) break;
+        std::vector<uint8_t> ef(4+length);
+        if (i + 4 + length == extra_field.size())
+        {
+            ef.insert(ef.end(), extra_field.begin() + i, extra_field.end());
+        } else
+        {
+            ef.insert(ef.end(), extra_field.begin() + i, extra_field.begin() + i + 4 + length);
+        }
+        extra_fields.push_back(ef);
+        i += 4 + length;
+    }
+    return {extra_fields};
+}
+//   扩展字段结构根据ZIP标准生成
+//   see https://pkwaredownloads.blob.core.windows.net/pkware-general/Documentation/APPNOTE-6.3.9.TXT
 //   NTFS 字段结构
 // | NTFS Sig (2 bytes) | Ext Len (2 bytes)  | Reserved (4 bytes) | Tag1 (2 bytes) | Size1 (2 bytes) | MTime (8 bytes) | ATime (8 bytes) | CTime (8 bytes) |
-// | -------------------|--------------------|--------------------|----------------|-----------------|-----------------|-----------------|-----------------|
+// |--------------------|--------------------|--------------------|----------------|-----------------|-----------------|-----------------|-----------------|
 // | 0x000A             | Length Following   | 0x0000             | 0x0001         | 24              | ...             | ...             | ...             |
 std::pair<ZipFile::NTFSExtraField, bool> ZipFile::extra_field_to_ntfs(const std::vector<uint8_t>& extra_field)
 {
@@ -930,7 +1179,7 @@ std::vector<uint8_t> ZipFile::ntfs_to_extra_field(const uint64_t m_time, const u
 }
 //   Unix 字段结构
 // | Unix Sig (2 bytes) | Ext Len (2 bytes)  | ATime (4 bytes) | MTime (4 bytes) | UID (2 bytes) | GID (2 bytes) |
-// | -------------------|--------------------|-----------------|-----------------|---------------|---------------|
+// |--------------------|--------------------|-----------------|-----------------|---------------|---------------|
 // | 0x000D             | Length Following   | ...             | ...             | ...           |               |
 std::pair<ZipFile::UnixExtraField, bool> ZipFile::extra_field_to_unix(const std::vector<uint8_t>& extra_field)
 {
@@ -969,4 +1218,88 @@ std::vector<uint8_t> ZipFile::unix_to_extra_field(const uint32_t a_time, const u
     *reinterpret_cast<uint16_t*>(&extra_field[12]) = htole16(uid);      // UID
     *reinterpret_cast<uint16_t*>(&extra_field[14]) = htole16(gid);      // GID
     return extra_field;
+}
+// Strong Encryption Header (0x0017), in local file header
+// | Sig (2 bytes) | Ext Len (2 bytes) | Format (2 bytes) | AlgID (2 bytes)     | BitLen (2 bytes) | Flags (2 bytes)  | Cert Data (variable) |
+// |---------------|-------------------|------------------|---------------------|------------------|------------------|----------------------|
+// | 0x0017        | Length Following  | ...              | ZipEncryptionMethod | 128, 256, etc.   | ...              | ...                  |
+ZipFile::StrongEncryptionHeader ZipFile::get_encryption_method(const std::vector<uint8_t>& extra_field)
+{
+    if (extra_field.size() < 4) return {0, ZipEncryptionMethod::Unknown};
+    const uint16_t signature = le16toh(*reinterpret_cast<const uint16_t*>(&extra_field[0])),
+    length = le16toh(*reinterpret_cast<const uint16_t*>(&extra_field[2]));
+    if (signature != 0x0017 || length + 4 < extra_field.size()) return {0, ZipEncryptionMethod::Unknown};
+    std::vector<uint8_t> cert_data;
+    if (length > 8)
+    {
+        cert_data.resize(length - 8);
+        std::copy(extra_field.begin() + 12, extra_field.begin() + 12 + length - 8, cert_data.begin());
+    }
+    return {
+        le16toh(*reinterpret_cast<const uint16_t*>(&extra_field[4])),
+        static_cast<ZipEncryptionMethod>(le16toh(*reinterpret_cast<const uint16_t*>(&extra_field[6]))),
+        le16toh(*reinterpret_cast<const uint16_t*>(&extra_field[8])),
+        le16toh(*reinterpret_cast<const uint16_t*>(&extra_field[10])),
+        {cert_data}
+    };
+}
+//  Strong Encryption Header(0x0017 in central directory extra field)
+//  WARNING! it is different from AES extra field(0x9901)!
+//  more information for AE-x extra field, see https://www.winzip.com/en/support/aes-encryption/
+// | IVSize (2 bytes) | IVData (IVSize bytes) | Size (4 bytes) | Format (2 bytes) | AlgID (2 bytes) | BitLen (2 bytes) | Flags (2 bytes) |
+// |------------------|-----------------------|----------------|------------------|-----------------|------------------|-----------------|
+// | ...              | ...                   | Length Follow  | 3                | ...             | 32 - 448         | ...             |
+// | ErdSize (2 bytes)| ErdData (ErdSize bytes) | ResSize (4 bytes) | Reserved (ResSize bytes) | VSize (2 bytes)        | VData (VSize-4 bytes) | VCRC32 (4 bytes) |
+// |------------------|-------------------------|-------------------|--------------------------|------------------------|-----------------------|------------------|
+// | ...              | ...                     | ...               | ...                      | include 4 bytes VCRC32 | ...                   | ...              |
+ZipFile::DecryptionHeaderRecord
+ZipFile::get_decryption_header(std::istream& is)
+{
+#define SAFE_READ(param) \
+    is.read(reinterpret_cast<char*>(&(param)), sizeof(param)); \
+    if (is.gcount() != sizeof(param)) return {};
+
+    uint16_t u16_cache;
+    uint32_t u32_cache, length;
+    DecryptionHeaderRecord decryption_header;
+    SAFE_READ(u16_cache);
+    decryption_header.iv_data.resize(u16_cache);
+    is.read(reinterpret_cast<char*>(decryption_header.iv_data.data()), u16_cache);
+    if (is.gcount() != u16_cache) return {};
+    is.read(reinterpret_cast<char*>(&length), sizeof(length));
+    if (is.gcount() != sizeof(length) || length < 20) return {};
+    SAFE_READ(decryption_header.format);
+    length -= 2;
+    SAFE_READ(decryption_header.alg_id);
+    length -= 2;
+    SAFE_READ(decryption_header.bit_len);
+    length -= 2;
+    SAFE_READ(decryption_header.flags);
+    length -= 2;
+
+    SAFE_READ(u16_cache);
+    length -= 2;
+    if (length < u16_cache + 4 + 2 + 4) return {};
+    decryption_header.erd_data.resize(u16_cache);
+    is.read(reinterpret_cast<char*>(decryption_header.erd_data.data()), u16_cache);
+    if (is.gcount() != u16_cache) return {};
+    length -= u16_cache;
+    SAFE_READ(u32_cache);
+    length -= 4;
+    if (length < u32_cache + 2 + 4) return {};
+    decryption_header.reserved.resize(u32_cache);
+    is.read(reinterpret_cast<char*>(decryption_header.reserved.data()), u32_cache);
+    if (is.gcount() != u32_cache) return {};
+    length -= u32_cache;
+    SAFE_READ(u16_cache);
+    length -= 2;
+    if (length < u16_cache) return {};
+    decryption_header.v_data.resize(u16_cache-4);
+    is.read(reinterpret_cast<char*>(decryption_header.v_data.data()), u16_cache-4);
+    if (is.gcount() != u16_cache) return {};
+    length -= u16_cache;
+    SAFE_READ(decryption_header.v_crc32);
+
+#undef SAFE_READ
+    return decryption_header;
 }

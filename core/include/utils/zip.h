@@ -11,9 +11,11 @@
 #include <vector>
 
 #include "api.h"
+#include "encryption/rc.h"
+#include "encryption/zip_crypto.h"
+#include "filesystem/entities.h"
 #include "utils/database.h"
 #include "utils/database_strategies.h"
-#include "filesystem/entities.h"
 #include "utils/fs_deleter.h"
 #include "utils/streams.h"
 
@@ -139,6 +141,22 @@ namespace zip
             AES_Encryption = 99,
             Unknown = 65535
         };
+        enum class ZipEncryptionMethod : uint16_t
+        {
+            ZipCrypto = 0x0000,  // Traditional PKWARE Encryption
+            DES = 0x6601,
+            RC2 = 0x6602,
+            ThreeDES168 = 0x6603,
+            ThreeDES112 = 0x6609,
+            AES128 = 0x660e,
+            AES192 = 0x660f,
+            AES256 = 0x6610,
+            RC2_5_2 = 0x6702,
+            Blowfish = 0x6720,
+            Twofish = 0x6721,
+            RC4 = 0x6801,
+            Unknown = 0xffff
+        };
 
         struct BACKUP_SUITE_API ZipLocalFileHeader
         {
@@ -246,11 +264,40 @@ namespace zip
     static_assert(0, "unknown platform");
 #endif
 
+
     class BACKUP_SUITE_API ZipFile
     {
       public:
         using ZipIstreamBuf = IstreamBuf;
         using ZipIstream = FileEntityIstream;
+        template<typename T>
+        class StreamEncryptorIstreamBuf : public ZipIstreamBuf
+        {
+            T encryptor_{};
+        public:
+            StreamEncryptorIstreamBuf(std::ifstream& ifs, T encryptor, int offset, size_t size) : IstreamBuf(ifs, offset, size), encryptor_(encryptor)
+            { }
+            int_type underflow() override
+            {
+                const auto result = IstreamBuf::underflow();
+                if (result == traits_type::eof()) {
+                    return result;
+                }
+
+                // 获取当前基类 buffer 的范围
+                char* start = gptr();
+                char* end = egptr();
+                size_t len = end - start;
+
+                // 3. 原地解密当前 buffer 中的剩余数据
+                for (char* p = gptr(); p < end; ++p) {
+                    *p = static_cast<char>(encryptor_.decrypt(static_cast<uint8_t>(*p)));
+                }
+                return traits_type::to_int_type(*gptr());
+            }
+        };
+        using ZipCryptoIstreamBuf = StreamEncryptorIstreamBuf<encryption::ZipCrypto>;
+        using RC4IstreamBuf = StreamEncryptorIstreamBuf<encryption::RC4>;
 
         // 中央目录记录结构体，包含文件名
         // 这里必须保证不要直接将CentralDirectoryEntry写入内存，ZipCentralDirectoryFileHeader的file_name由开头的std::string管理
@@ -311,9 +358,10 @@ namespace zip
          * @brief 添加文件实体到zip归档
          * @param file ReadableFile对象，提供文件内容和元数据
          * @param compression_method
+         * @param encryption_method
          * @return 是否成功添加
          */
-        bool add_entity(ReadableFile& file, header::ZipCompressionMethod compression_method = header::ZipCompressionMethod::Store);
+        bool add_entity(ReadableFile& file, header::ZipCompressionMethod compression_method = header::ZipCompressionMethod::Store, header::ZipEncryptionMethod encryption_method = header::ZipEncryptionMethod::Unknown);
 
         /**
          * @brief 列出指定路径下的所有文件和目录
@@ -327,7 +375,7 @@ namespace zip
          * @param path 文件路径
          * @return 文件流对象，如果文件不存在或不是普通文件则返回nullptr
          */
-        [[nodiscard]] std::unique_ptr<ZipIstream> get_file_stream(const std::filesystem::path& path) const;
+        [[nodiscard]] std::unique_ptr<ZipIstream> get_file_stream(const std::filesystem::path& path);
 
         /**
          * @brief 完成zip归档创建
@@ -337,6 +385,8 @@ namespace zip
         [[nodiscard]] bool is_readable() const { return is_valid_ && ifs_ && ifs_->is_open(); }
         [[nodiscard]] bool is_writable() const { return is_valid_ && ofs_ && ofs_->is_open(); }
         [[nodiscard]] std::string comment() const { return comment_; }
+        void set_password(const std::vector<uint8_t>& password) { password_ = password; invalid_password_ = false; }
+        bool is_invalid_password() const { return invalid_password_;}
 
         void set_version_made_by(const header::ZipVersionNeeded version)
         {
@@ -349,6 +399,8 @@ namespace zip
         IFStreamPointer ifs_;
         OFStreamPointer ofs_;
         bool is_valid_ = true;
+        std::vector<uint8_t> password_{};
+        bool invalid_password_ = false;
 
         // 数据库成员变量
         db::Database db_;
@@ -368,6 +420,33 @@ namespace zip
                                          const std::string& file_comment) const;
 
         // 扩展字段解读
+        static const std::vector<std::vector<uint8_t>> &get_extra_field_list(const std::vector<uint8_t>& extra_field);
+        struct StrongEncryptionHeader
+        {
+            // format = 2
+            uint16_t format;
+            header::ZipEncryptionMethod alg_id;
+            // 32 - 448 bits
+            uint16_t bit_len;
+            // 0x0001 - Password is required to decrypt
+            // 0x0002 - Certificates only
+            // 0x0003 - Password or certificate required to decrypt
+            // Values > 0x0003 reserved for certificate processing
+            uint16_t flags;
+            std::vector<uint8_t> cert_data;
+        };
+        static StrongEncryptionHeader get_encryption_method(const std::vector<uint8_t>& extra_field);
+        struct DecryptionHeaderRecord
+        {
+            std::vector<uint8_t> iv_data{};
+            // format = 3
+            uint16_t format = 0;
+            header::ZipEncryptionMethod alg_id;
+            uint16_t bit_len = 0, flags = 0;
+            std::vector<uint8_t> erd_data{}, reserved{}, v_data{};
+            uint32_t v_crc32=0;
+        };
+        static DecryptionHeaderRecord get_decryption_header(std::istream& is);
         struct NTFSExtraField
         {
             uint64_t m_time, a_time, c_time;
@@ -382,8 +461,6 @@ namespace zip
         static std::pair<UnixExtraField, bool> extra_field_to_unix(const std::vector<uint8_t>& extra_field);
         static std::vector<uint8_t> unix_to_extra_field(uint32_t a_time=0, uint32_t m_time=0, uint16_t uid=0, uint16_t gid=0);
     };
-
-
 } // namespace zip
 
 #endif // BACKUPSUITE_ZIP_H

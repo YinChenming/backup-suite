@@ -10,7 +10,7 @@ using namespace utils::time_converter;
 
 #ifdef _WIN32
 
-std::unique_ptr<Folder> WindowsDevice::get_folder(const std::filesystem::path& path, bool recursion) const
+std::unique_ptr<Folder> WindowsDevice::get_folder(const std::filesystem::path& path, bool recursion)
 {
     const std::unique_ptr<FileEntityMeta> meta = get_meta(path);
     if (!meta || meta->type != FileEntityType::Directory)
@@ -55,7 +55,7 @@ std::unique_ptr<Folder> WindowsDevice::get_folder(const std::filesystem::path& p
     return std::make_unique<Folder>(*std::move(meta), std::move(children));
 }
 
-std::unique_ptr<ReadableFile> WindowsDevice::get_file(const std::filesystem::path& path) const
+std::unique_ptr<ReadableFile> WindowsDevice::get_file(const std::filesystem::path& path)
 {
     const std::unique_ptr<FileEntityMeta> meta = get_meta(path);
     if (!meta || meta->type != FileEntityType::RegularFile)
@@ -83,7 +83,7 @@ std::unique_ptr<std::ifstream> WindowsDevice::get_file_stream(const std::filesys
  * @param path
  * @return FileEntityMeta对象，如果路径无效或不是文件则返回空对象
  */
-std::unique_ptr<FileEntityMeta> WindowsDevice::get_meta(const std::filesystem::path& path) const
+std::unique_ptr<FileEntityMeta> WindowsDevice::get_meta(const std::filesystem::path& path)
 {
     const auto realpath = root / path;
     // get file attributes
@@ -295,7 +295,7 @@ std::unique_ptr<FileEntityMeta> WindowsDevice::get_meta(const std::filesystem::p
     return std::make_unique<FileEntityMeta>(meta);
 }
 
-bool WindowsDevice::exists(const std::filesystem::path& path) const
+bool WindowsDevice::exists(const std::filesystem::path& path)
 {
     const DWORD attributes = GetFileAttributesW((root / path).wstring().c_str());
     // return if error
@@ -311,7 +311,7 @@ bool WindowsDevice::write_file_force(ReadableFile &file)
     return _write_file(file, true);
 }
 
-bool WindowsDevice::_write_file(ReadableFile &file, const bool force) const
+bool WindowsDevice::_write_file(ReadableFile &file, const bool force)
 {
     const auto meta = file.get_meta();
     const auto realpath = root / meta.path;
@@ -356,7 +356,7 @@ bool WindowsDevice::write_folder(Folder &folder)
     return set_file_attributes(meta);
 }
 
-bool WindowsDevice::set_file_attributes(const FileEntityMeta& meta) const
+bool WindowsDevice::set_file_attributes(const FileEntityMeta& meta)
 {
     const auto realpath = root / meta.path;
     if (!exists(realpath))

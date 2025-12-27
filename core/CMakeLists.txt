@@ -15,12 +15,12 @@ set(CORE_SOURCES
         src/backup/backup_controller.cpp
         src/utils/database.cpp
         src/utils/zip.cpp
-        include/utils/bstream.h
-        include/compress/huffman.h
         src/utils/crc.cpp
         src/filesystem/entities.cpp
         src/utils/tmpfile.cpp
         src/filesystem/compresses_device.cpp
+        src/encryption/zip_crypto.cpp
+        src/encryption/rc.cpp
         #        src/compress/deflate.cpp
 )
 
