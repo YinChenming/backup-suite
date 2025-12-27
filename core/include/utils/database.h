@@ -106,7 +106,7 @@ namespace db
     }
     inline void bind_parameter(sqlite3_stmt* stmt, int index, const std::string& value)
     {
-        sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, index, reinterpret_cast<const char*>(value.c_str()), -1, SQLITE_TRANSIENT);
     }
 
     template<typename T>

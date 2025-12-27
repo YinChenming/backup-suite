@@ -199,7 +199,6 @@ ZipFile::~ZipFile() {
         close();
     }
 }
-
 void ZipFile::init_db_from_zip()
 {
     if (!is_valid_ || !ifs_ || !ifs_->is_open())
@@ -284,21 +283,24 @@ void ZipFile::init_db_from_zip()
     // 处理读到文件头的情况
     if (!eocd_p)
     {
-        for (size_t i = start_of_buffer; i < 2048 - sizeof(ZipEndOfCentralDirectoryRecord); i++)
+        size_t i;
+        for (i = start_of_buffer; i <= 2048 - sizeof(ZipEndOfCentralDirectoryRecord); i++)
         {
             eocd_p = reinterpret_cast<ZipEndOfCentralDirectoryRecord*>(buffer + i);
             if (le32toh(eocd_p->signature) == ZipFileHeaderSignature::EndOfCentralDirectory)
             {
                 if (const auto real_comment_length =
                         offset_from_end + 2048 - i - sizeof(ZipEndOfCentralDirectoryRecord);
-                    real_comment_length == le16toh(eocd_p->comment_length))
+                    real_comment_length != le16toh(eocd_p->comment_length))
                 {
                     std::cerr << "no EOCD, exit!" << std::endl;
-                    break;
+                    is_valid_ = false;
+                    return;
                 }
+                break;
             }
         }
-        if (!eocd_p)
+        if (i > 2048 - sizeof(ZipEndOfCentralDirectoryRecord))
         {
             std::cerr << "no EOCD, exit!" << std::endl;
             is_valid_ = false;
@@ -363,7 +365,6 @@ void ZipFile::init_db_from_zip()
         }
     }
 }
-
 bool ZipFile::insert_entity(const ZipCentralDirectoryFileHeader* cdfh, const std::string& file_name,
                             const std::vector<uint8_t>& extra_field, const std::string& file_comment) const
 {
@@ -615,9 +616,38 @@ void ZipFile::write_central_directory_record(const FileEntityMeta& meta, uint32_
     // 添加到中央目录向量
     m_central_directory.push_back(entry);
 }
-
+ZipFile::CentralDirectoryEntry ZipFile::sql_entity_to_cdfh(const db::ZipInitializationStrategy::SQLZipEntity& entity)
+{
+    auto [version_made_by, version_needed, general_purpose, compression_method, last_modified, crc32, compressed_size, uncompressed_size, disk_number, internal_attributes, external_attributes, local_header_offset, filename, extra_field, file_comment] = entity;
+    const CentralDirectoryEntry entry = {
+        filename,
+        extra_field,
+        file_comment,
+        {
+            ZipFileHeaderSignature::CentralDirectoryFile,
+            0,
+            static_cast<ZipVersionMadeBy>(version_made_by),
+            static_cast<ZipVersionNeeded>(version_needed),
+            general_purpose,
+            static_cast<ZipCompressionMethod>(compression_method),
+            0, // last_mod_time
+            0, // last_mod_date
+            crc32,
+            compressed_size,
+            uncompressed_size,
+            static_cast<uint16_t>(filename.size()),
+            static_cast<uint16_t>(extra_field.size()),
+            static_cast<uint16_t>(file_comment.size()),
+            disk_number,
+            internal_attributes,
+            external_attributes,
+            local_header_offset
+        }
+    };
+    return entry;
+}
 // 辅助函数：将SQLZipEntity转换为FileEntityMeta
-static std::pair<FileEntityMeta, int> sql_zip_entity2file_meta(const db::ZipInitializationStrategy::SQLZipEntity& entity)
+static FileEntityMeta sql_zip_entity2file_meta(const db::ZipInitializationStrategy::SQLZipEntity& entity)
 {
     auto [version_made_by, version_needed, general_purpose, compression_method, last_modified, crc32, compressed_size, uncompressed_size, disk_number, internal_attributes, external_attributes, local_header_offset, filename, extra_field, file_comment] = entity;
 
@@ -648,7 +678,7 @@ static std::pair<FileEntityMeta, int> sql_zip_entity2file_meta(const db::ZipInit
         0  // device_minor
     };
 
-    return std::make_pair(meta, static_cast<int>(local_header_offset));
+    return meta;
 }
 
 // 实现list_dir方法
@@ -684,33 +714,7 @@ std::vector<ZipFile::CentralDirectoryEntry> ZipFile::list_dir(const std::filesys
     auto rs = db_.query<db::ZipInitializationStrategy::SQLZipEntity>(std::move(stmt));
     for (const auto& entity : rs)
     {
-        auto [version_made_by, version_needed, general_purpose, compression_method, last_modified, crc32, compressed_size, uncompressed_size, disk_number, internal_attributes, external_attributes, local_header_offset, filename, extra_field, file_comment] = entity;
-        const CentralDirectoryEntry entry = {
-            filename,
-            extra_field,
-            file_comment,
-            {
-                ZipFileHeaderSignature::CentralDirectoryFile,
-                0,
-                static_cast<ZipVersionMadeBy>(version_made_by),
-                static_cast<ZipVersionNeeded>(version_needed),
-                general_purpose,
-                static_cast<ZipCompressionMethod>(compression_method),
-                0, // last_mod_time
-                0, // last_mod_date
-                crc32,
-                compressed_size,
-                uncompressed_size,
-                static_cast<uint16_t>(filename.size()),
-                static_cast<uint16_t>(extra_field.size()),
-                static_cast<uint16_t>(file_comment.size()),
-                disk_number,
-                internal_attributes,
-                external_attributes,
-                local_header_offset
-            }
-        };
-        results.push_back(entry);
+        results.push_back(sql_entity_to_cdfh(entity));
     }
     return results;
 }
@@ -748,36 +752,31 @@ std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesys
     try
     {
         const auto entity = db_.query_one<db::ZipInitializationStrategy::SQLZipEntity>(std::move(stmt));
-        auto [meta, offset] = sql_zip_entity2file_meta(entity);
+        const auto cdfh = sql_entity_to_cdfh(entity);
+        ZipLocalFileHeader lfh;
+        ifs_->seekg(cdfh.record.local_header_offset, std::ios::beg);
+        ifs_->read(reinterpret_cast<char*>(&lfh), sizeof(ZipLocalFileHeader));
+        if (ifs_->gcount() != sizeof(ZipLocalFileHeader) || le32toh(lfh.signature) != ZipFileHeaderSignature::LocalFile)
+        {
+            return nullptr;
+        }
+        // 从小端序中转换
+        lfh_le_to_host(lfh);
+        size_t real_offset = cdfh.record.local_header_offset + sizeof(ZipLocalFileHeader)
+            + lfh.file_name_length + lfh.extra_field_length;
+
+        auto meta = sql_zip_entity2file_meta(entity);
 
         // 检查是否为普通文件
         if (meta.type != FileEntityType::RegularFile)
             return nullptr;
 
-        zip_stream = std::make_unique<ZipIstream>(*ifs_.get(), offset, meta);
+        zip_stream = std::make_unique<ZipIstream>(*ifs_.get(), real_offset, meta);
     } catch (const std::exception& e)
     {
         return nullptr;
     }
     return zip_stream;
-}
-
-// 写入中央目录结束标记
-void ZipFile::write_end_of_central_directory(uint32_t central_directory_offset, uint32_t central_directory_size) {
-    ZipEndOfCentralDirectoryRecord eocd;
-    memset(&eocd, 0, sizeof(eocd));
-
-    eocd.signature = ZipFileHeaderSignature::EndOfCentralDirectory;
-    eocd.disk_number = 0;
-    eocd.central_directory_start_disk = 0;
-    eocd.num_central_directory_records_on_this_disk = static_cast<uint16_t>(m_central_directory.size());
-    eocd.total_central_directory_records = static_cast<uint16_t>(m_central_directory.size());
-    eocd.central_directory_size = central_directory_size;
-    eocd.central_directory_offset = central_directory_offset;
-    eocd.comment_length = 0;
-
-    // 写入中央目录结束标记
-    ofs_->write(reinterpret_cast<const char*>(&eocd), sizeof(ZipEndOfCentralDirectoryRecord));
 }
 
 // 完成zip归档创建
@@ -795,98 +794,54 @@ void ZipFile::close() {
     // 计算中央目录的偏移量和大小
     uint32_t central_directory_offset = static_cast<uint32_t>(ofs_->tellp());
     uint32_t central_directory_size = 0;
+    uint16_t total_central_directory_records = 0;
 
     // 写入中央目录
-    for (const auto& entry : m_central_directory) {
-        // 写入中央目录记录
-        ofs_->write(reinterpret_cast<const char*>(&entry.record), sizeof(ZipCentralDirectoryFileHeader));
-
-        // 写入文件名
-        ofs_->write(entry.file_name.c_str(), entry.file_name.size());
-
-        central_directory_size +=
-            sizeof(ZipCentralDirectoryFileHeader) +
-            static_cast<uint32_t>(entry.file_name.size());
+    auto stmt = db_.create_statement(
+        "SELECT " + db::ZipInitializationStrategy::SQLEntityColumns +
+        " FROM zip_entity ORDER BY filename ASC;"
+    );
+    auto rs = db_.query<db::ZipInitializationStrategy::SQLZipEntity>(std::move(stmt));
+    for (const auto& entity : rs)
+    {
+        total_central_directory_records++;
+        auto cdfh = sql_entity_to_cdfh(entity);
+        cdfh_host_to_le(cdfh.record);
+        ofs_->write(reinterpret_cast<const char*>(&cdfh.record), sizeof(ZipCentralDirectoryFileHeader));
+        central_directory_size += sizeof(ZipCentralDirectoryFileHeader);
+        ofs_->write(reinterpret_cast<const char*>(cdfh.file_name.c_str()), cdfh.file_name.size());
+        central_directory_size += static_cast<uint32_t>(cdfh.file_name.size());
+        if (!cdfh.extra_field.empty())
+        {
+            ofs_->write(reinterpret_cast<const char*>(cdfh.extra_field.data()), cdfh.extra_field.size());
+            central_directory_size += static_cast<uint32_t>(cdfh.extra_field.size());
+        }
+        if (!cdfh.file_comment.empty())
+        {
+            ofs_->write(reinterpret_cast<const char*>(cdfh.file_comment.c_str()), cdfh.file_comment.size());
+            central_directory_size += static_cast<uint32_t>(cdfh.file_comment.size());
+        }
     }
 
-    // 写入中央目录结束标记
-    write_end_of_central_directory(
-        static_cast<uint32_t>(central_directory_offset),
-        static_cast<uint32_t>(central_directory_size)
-    );
-
+    ZipEndOfCentralDirectoryRecord eocd {
+        ZipFileHeaderSignature::EndOfCentralDirectory,
+        0,
+        0,
+        static_cast<uint16_t>(total_central_directory_records),
+        static_cast<uint16_t>(total_central_directory_records),
+        central_directory_size,
+        central_directory_offset,
+        static_cast<uint16_t>(comment_.size())
+    };
+    eocd_host_to_le(eocd);
+    ofs_->write(reinterpret_cast<const char*>(&eocd), sizeof(eocd));
+    if (!comment_.empty())
+    {
+        ofs_->write(reinterpret_cast<const char*>(comment_.data()), comment_.size());
+    }
     // 关闭文件
     ofs_->close();
     is_valid_ = false;
-}
-
-// 实现：将FileEntityMeta转换为Zip本地文件头
-ZipLocalFileHeader ZipFile::convert_to_local_file_header(const FileEntityMeta& meta) {
-    ZipLocalFileHeader header;
-    memset(&header, 0, sizeof(header));
-
-    header.signature = ZipFileHeaderSignature::LocalFile;
-    header.version_needed = ZipVersionNeeded::Version20;
-    header.general_purpose = static_cast<uint16_t>(ZipGeneralPurposeBitFlag::Utf8Encoding);
-    header.compression_method = ZipCompressionMethod::Store;
-
-    // 设置时间戳（简化处理）
-    header.last_mod_time = 0;
-    header.last_mod_date = 0;
-
-    // 文件大小（目前使用存储模式，压缩前后大小相同）
-    header.uncompressed_size = static_cast<uint32_t>(meta.size);
-    header.compressed_size = static_cast<uint32_t>(meta.size);
-
-    // 文件名长度
-    header.file_name_length = static_cast<uint16_t>(meta.path.string().size());
-    header.extra_field_length = 0; // 暂不使用扩展字段
-
-    return header;
-}
-
-// 实现：将FileEntityMeta转换为Zip中央目录记录
-ZipFile::CentralDirectoryEntry ZipFile::convert_to_central_directory_record(
-    const FileEntityMeta& meta,
-    uint32_t local_header_offset,
-    uint32_t compressed_size,
-    uint32_t crc32) {
-    CentralDirectoryEntry entry;
-    memset(&entry.record, 0, sizeof(entry.record));
-
-    entry.record.signature = ZipFileHeaderSignature::CentralDirectoryFile;
-    entry.record.version_made_by = ZipVersionMadeBy::Unix;
-    entry.record.version_needed = ZipVersionNeeded::Version20;
-    entry.record.general_purpose = static_cast<uint16_t>(ZipGeneralPurposeBitFlag::Utf8Encoding);
-    entry.record.compression_method = ZipCompressionMethod::Store;
-
-    // 设置时间戳（简化处理）
-    entry.record.last_mod_time = 0;
-    entry.record.last_mod_date = 0;
-
-    entry.record.crc32 = crc32;
-    entry.record.compressed_size = compressed_size;
-    entry.record.uncompressed_size = static_cast<uint32_t>(meta.size);
-    entry.record.file_name_length = static_cast<uint16_t>(meta.path.string().size());
-    entry.record.extra_field_length = 0;
-    entry.record.file_comment_length = 0;
-    entry.record.disk_number_start = 0;
-
-    // 设置外部文件属性（根据文件类型）
-    if (meta.type == FileEntityType::RegularFile) {
-        entry.record.external_file_attributes = 0x81A40000; // 普通文件
-    } else if (meta.type == FileEntityType::Directory) {
-        entry.record.external_file_attributes = 0x41ED0000; // 目录
-    } else if (meta.type == FileEntityType::SymbolicLink) {
-        entry.record.external_file_attributes = 0xA1FF0000; // 符号链接
-    } else {
-        entry.record.external_file_attributes = 0x81A40000; // 默认普通文件
-    }
-
-    entry.record.local_header_offset = local_header_offset;
-    entry.file_name = meta.path.string();
-
-    return entry;
 }
 
 FileEntityMeta ZipFile::cdfh_to_file_meta(const CentralDirectoryEntry& cdfh)
@@ -968,6 +923,8 @@ FileEntityMeta ZipFile::cdfh_to_file_meta(const CentralDirectoryEntry& cdfh)
     update_file_entity_meta(meta);
     return meta;
 }
+// 扩展字段结构根据ZIP标准生成
+// https://pkwaredownloads.blob.core.windows.net/pkware-general/Documentation/APPNOTE-6.3.9.TXT
 //   NTFS 字段结构
 // | NTFS Sig (2 bytes) | Ext Len (2 bytes)  | Reserved (4 bytes) | Tag1 (2 bytes) | Size1 (2 bytes) | MTime (8 bytes) | ATime (8 bytes) | CTime (8 bytes) |
 // | -------------------|--------------------|--------------------|----------------|-----------------|-----------------|-----------------|-----------------|

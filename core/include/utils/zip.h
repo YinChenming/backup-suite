@@ -388,16 +388,14 @@ namespace zip
          * @brief 完成zip归档创建
          */
         void close();
+        bool is_open() const { return is_valid_; }
 
         void set_version_made_by(const header::ZipVersionNeeded version)
         {
             version_make_by_ = version;
         }
+        static CentralDirectoryEntry sql_entity_to_cdfh(const db::ZipInitializationStrategy::SQLZipEntity& entity);
         static FileEntityMeta cdfh_to_file_meta(const CentralDirectoryEntry&);
-        // 预留接口：将FileEntityMeta转换为Zip本地文件头
-        static header::ZipLocalFileHeader convert_to_local_file_header(const FileEntityMeta& meta);
-        // 预留接口：将FileEntityMeta转换为Zip中央目录记录
-        static CentralDirectoryEntry convert_to_central_directory_record(const FileEntityMeta& meta, uint32_t local_header_offset, uint32_t compressed_size, uint32_t crc32);
 
       private:
         IFStreamPointer ifs_;
@@ -423,7 +421,6 @@ namespace zip
 
         void write_central_directory_record(const FileEntityMeta& meta, uint32_t local_header_offset,
                                             uint32_t compressed_size, uint32_t crc32);
-        void write_end_of_central_directory(uint32_t central_directory_offset, uint32_t central_directory_size);
 
         // 扩展字段解读
         struct NTFSExtraField
