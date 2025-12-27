@@ -19,6 +19,8 @@ set(CORE_SOURCES
         include/compress/huffman.h
         src/utils/crc.cpp
         src/filesystem/entities.cpp
+        src/utils/tmpfile.cpp
+        src/filesystem/compresses_device.cpp
         #        src/compress/deflate.cpp
 )
 

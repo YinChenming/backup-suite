@@ -192,6 +192,7 @@ TEST(TestZip, TestZipRead) {
         // 测试get_file_stream
         auto stream = zip_reader.get_file_stream(test_filename);
         ASSERT_NE(stream, nullptr);
+        print_meta(stream->get_meta(), GTEST_LOG_(INFO) << "Zip read file meta:\n");
 
         // 读取文件内容
         std::string read_content;

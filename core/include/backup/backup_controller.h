@@ -14,7 +14,7 @@
 struct BackupConfig
 {
     bool backup_symbolic_links = false;
-    FileEntityType backup_file_types = FileEntityType::RegularFile | FileEntityType::Directory;
+    FileEntityType backup_file_types = FileEntityType::RegularFile | FileEntityType::Directory | FileEntityType::SymbolicLink;
 };
 
 class BACKUP_SUITE_API BackupController

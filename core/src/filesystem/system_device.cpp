@@ -35,12 +35,19 @@ std::unique_ptr<Folder> WindowsDevice::get_folder(const std::filesystem::path& p
         if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
         {
             if (recursion)
-                children.push_back(*get_folder(path / ffd.cFileName));
+            {
+                if (const auto child_folder = get_folder(path / ffd.cFileName); child_folder != nullptr)
+                    children.emplace_back(*child_folder);
+            }
             else
-                children.push_back(*new Folder(*get_meta(path / ffd.cFileName), {}));
+            {
+                if (const auto file_meta = get_meta(path / ffd.cFileName); file_meta != nullptr)
+                    children.emplace_back(Folder{*file_meta, {}});
+            }
         } else
         {
-            children.push_back(*new File(*get_meta(path / ffd.cFileName)));
+            if (const auto file_meta = get_meta(path / ffd.cFileName))
+                children.emplace_back(File{*file_meta});
         }
     }
 
@@ -335,6 +342,11 @@ bool WindowsDevice::_write_file(ReadableFile &file, const bool force) const
 bool WindowsDevice::write_folder(Folder &folder)
 {
     auto meta = folder.get_meta();
+    if (const auto folder_path = meta.path; folder_path.empty() || folder_path.string() == "." || folder_path.string() == "./")
+    {
+        // 根目录不需要创建
+        return true;
+    }
     meta.type = FileEntityType::Directory;
     const auto realpath = root / folder.get_meta().path;
     if (exists(realpath))
@@ -368,7 +380,7 @@ bool WindowsDevice::set_file_attributes(const FileEntityMeta& meta) const
     mtime = chrono2ft(meta.modification_time),
     atime = chrono2ft(meta.access_time);
 
-    HANDLE hFile = CreateFileW(
+    const HANDLE hFile = CreateFileW(
         realpath.wstring().c_str(),
         FILE_WRITE_ATTRIBUTES,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -391,6 +403,7 @@ bool WindowsDevice::set_file_attributes(const FileEntityMeta& meta) const
     else
         attributes &= ~FILE_ATTRIBUTE_DIRECTORY;
 
+    // ReSharper disable once CppDFAConstantConditions
     if (meta.type == FileEntityType::SymbolicLink)
         attributes |= FILE_ATTRIBUTE_REPARSE_POINT;
     else

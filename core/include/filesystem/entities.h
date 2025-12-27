@@ -118,4 +118,15 @@ public:
     virtual void close() {};
 };
 
+class BACKUP_SUITE_API EmptyReadableFile : public ReadableFile
+{
+public:
+    ~EmptyReadableFile() override = default;
+    EmptyReadableFile() = default;
+    explicit EmptyReadableFile(File &file): ReadableFile(file) {}
+    explicit EmptyReadableFile(const FileEntityMeta& meta) : ReadableFile(meta) {}
+    [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read() override { return nullptr; }
+    [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read(size_t size) override { return nullptr; }
+};
+
 #endif //FILE_ENTITY_H

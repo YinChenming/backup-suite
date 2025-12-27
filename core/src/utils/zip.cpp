@@ -23,7 +23,7 @@ static constexpr uint64_t WINDOWS_TICK = 10000000;
 static constexpr uint64_t SEC_TO_UNIX_EPOCH = 11644473600ULL;
 
 static time_t dos_to_unix_time(const uint16_t dos_date, const uint16_t dos_time) {
-    tm t;
+    tm t{};
 
     // 清零以防受到本地时区/夏令时干扰
     t.tm_isdst = -1;
@@ -42,7 +42,7 @@ static time_t dos_to_unix_time(const uint16_t dos_date, const uint16_t dos_time)
 }
 static std::pair<uint16_t, uint16_t> unix_time_to_dos(const time_t& time_point)
 {
-    tm tm;
+    tm tm{};
 #ifdef _WIN32
     if (localtime_s(&tm, &time_point) != 0) {
         return {0, 0}; // 转换失败处理
@@ -214,7 +214,7 @@ void ZipFile::init_db_from_zip()
     // EOCD记录通常在文件末尾，范围在文件最后22字节到文件最后65557字节之间
 
     // 搜索EOCD签名
-    ZipEndOfCentralDirectoryRecord *eocd_p = nullptr;
+    const ZipEndOfCentralDirectoryRecord *eocd_p = nullptr;
     char buffer[2048];
     size_t offset_from_end = 0;
     size_t start_of_buffer = 0;
@@ -244,10 +244,11 @@ void ZipFile::init_db_from_zip()
             {
                 if (const auto real_comment_length =
                         offset_from_end + 2048 - i - sizeof(ZipEndOfCentralDirectoryRecord);
-                    real_comment_length == le16toh(eocd_p->comment_length))
+                    real_comment_length != le16toh(eocd_p->comment_length))
                 {
                     std::cerr << "no EOCD, exit!" << std::endl;
-                    continue;
+                    is_valid_ = false;
+                    return;
                 }
                 break;
             }
@@ -521,7 +522,7 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
     if (compression_method == ZipCompressionMethod::Store)
     {
         std::unique_ptr<std::vector<std::byte>> buffer;
-        while (((buffer = file.read(4096))) && !buffer->empty()) {
+        while (((buffer = file.read(4096))) && buffer && !buffer->empty()) {
             // 目前使用存储模式，不压缩
             ofs_->write(reinterpret_cast<const char*>(buffer->data()), buffer->size());
             crc32 = crc::crc32(reinterpret_cast<const char*>(buffer->data()), buffer->size());
@@ -576,46 +577,6 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
     return true;
 }
 
-// 写入中央目录记录
-void ZipFile::write_central_directory_record(const FileEntityMeta& meta, uint32_t local_header_offset, uint32_t compressed_size, uint32_t crc32) {
-    CentralDirectoryEntry entry;
-    memset(&entry.record, 0, sizeof(entry.record));
-
-    entry.record.signature = ZipFileHeaderSignature::CentralDirectoryFile;
-    entry.record.version_made_by = ZipVersionMadeBy::Unix;
-    entry.record.version_needed = ZipVersionNeeded::Version20;
-    entry.record.general_purpose = static_cast<uint16_t>(ZipGeneralPurposeBitFlag::Utf8Encoding);
-    entry.record.compression_method = ZipCompressionMethod::Store;
-
-    // 设置时间戳（简化处理）
-    entry.record.last_mod_time = 0;
-    entry.record.last_mod_date = 0;
-
-    entry.record.crc32 = crc32;
-    entry.record.compressed_size = compressed_size;
-    entry.record.uncompressed_size = static_cast<uint32_t>(meta.size);
-    entry.record.file_name_length = static_cast<uint16_t>(meta.path.string().size());
-    entry.record.extra_field_length = 0;
-    entry.record.file_comment_length = 0;
-    entry.record.disk_number_start = 0;
-
-    // 设置外部文件属性（根据文件类型）
-    if (meta.type == FileEntityType::RegularFile) {
-        entry.record.external_file_attributes = 0x81A40000; // 普通文件
-    } else if (meta.type == FileEntityType::Directory) {
-        entry.record.external_file_attributes = 0x41ED0000; // 目录
-    } else if (meta.type == FileEntityType::SymbolicLink) {
-        entry.record.external_file_attributes = 0xA1FF0000; // 符号链接
-    } else {
-        entry.record.external_file_attributes = 0x81A40000; // 默认普通文件
-    }
-
-    entry.record.local_header_offset = local_header_offset;
-    entry.file_name = meta.path.string();
-
-    // 添加到中央目录向量
-    m_central_directory.push_back(entry);
-}
 ZipFile::CentralDirectoryEntry ZipFile::sql_entity_to_cdfh(const db::ZipInitializationStrategy::SQLZipEntity& entity)
 {
     auto [version_made_by, version_needed, general_purpose, compression_method, last_modified, crc32, compressed_size, uncompressed_size, disk_number, internal_attributes, external_attributes, local_header_offset, filename, extra_field, file_comment] = entity;
@@ -722,6 +683,10 @@ std::vector<ZipFile::CentralDirectoryEntry> ZipFile::list_dir(const std::filesys
 // 实现get_file_stream方法
 std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesystem::path& path) const
 {
+    if (!is_valid_ || !ifs_ || !ifs_->is_open())
+    {
+        return nullptr;
+    }
     // path like "/...", and not contain any driver letter
     if (path.has_root_name() || !path.is_relative())
         return nullptr; // cannot analyze a path starts with "C:\"
@@ -762,15 +727,8 @@ std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesys
         }
         // 从小端序中转换
         lfh_le_to_host(lfh);
-        size_t real_offset = cdfh.record.local_header_offset + sizeof(ZipLocalFileHeader)
-            + lfh.file_name_length + lfh.extra_field_length;
-
+        size_t real_offset = cdfh.record.local_header_offset + sizeof(lfh) + lfh.file_name_length + lfh.extra_field_length;
         auto meta = sql_zip_entity2file_meta(entity);
-
-        // 检查是否为普通文件
-        if (meta.type != FileEntityType::RegularFile)
-            return nullptr;
-
         zip_stream = std::make_unique<ZipIstream>(*ifs_.get(), real_offset, meta);
     } catch (const std::exception& e)
     {
@@ -847,7 +805,7 @@ void ZipFile::close() {
 FileEntityMeta ZipFile::cdfh_to_file_meta(const CentralDirectoryEntry& cdfh)
 {
     FileEntityMeta meta {
-        cdfh.file_name,
+        std::filesystem::path(cdfh.file_name),
         FileEntityType::RegularFile,
         cdfh.record.uncompressed_size,
         std::chrono::system_clock::from_time_t(dos_to_unix_time(cdfh.record.last_mod_date, cdfh.record.last_mod_time)),

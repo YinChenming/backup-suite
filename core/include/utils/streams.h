@@ -6,6 +6,7 @@
 #define BACKUPSUITE_BSTREAM_H
 
 #include <iostream>
+#include <filesystem/entities.h>
 
 #include "api.h"
 
@@ -133,6 +134,66 @@ public:
     {
         return os_.eof();
     }
+};
+
+class BACKUP_SUITE_API IstreamBuf: public std::streambuf
+{
+    std::ifstream &file_;
+    int offset_;
+    size_t size_;
+    static constexpr size_t buffer_size_ = 8192;
+    char buffer_[buffer_size_] = {};
+public:
+    explicit IstreamBuf(std::ifstream &ifs, int offset, size_t size):
+        file_(ifs), offset_(offset), size_(size)
+    {
+        setg(nullptr, nullptr, nullptr);
+        if (offset < 0 || size == 0 || !ifs.is_open() || ifs.eof())
+        {
+            offset_ = size_ = 0;
+            return;
+        }
+    }
+    ~IstreamBuf() override = default;
+    int_type underflow() override
+    {
+        if (gptr() < egptr())
+        {
+            return traits_type::to_int_type(*gptr());
+        }
+        file_.seekg(offset_, std::ios::beg);
+        size_t to_read = std::min(buffer_size_, size_);
+        if (!file_.read(buffer_, to_read))
+        {
+            return traits_type::eof();
+        }
+        offset_ += to_read;
+        size_ -= to_read;
+        if (to_read == 0 || file_.eof() || file_.gcount() != static_cast<std::streamsize>(to_read))
+        {
+            return traits_type::eof();
+        }
+        setg(buffer_, buffer_, buffer_ + to_read);
+        return traits_type::to_int_type(*gptr());
+    }
+};
+class BACKUP_SUITE_API FileEntityIstream: public std::istream
+{
+    FileEntityMeta meta_;
+    std::ifstream &file_;
+    std::unique_ptr<IstreamBuf> buffer_;
+public:
+    FileEntityIstream(std::ifstream &ifs, const int offset, const FileEntityMeta &meta):
+        std::istream(nullptr), meta_(meta), file_(ifs), buffer_(std::make_unique<IstreamBuf>(ifs, offset, meta.size))
+    {
+        rdbuf(buffer_.get());
+        if (!meta_.size || !ifs.is_open() || ifs.eof())
+        {
+            setstate(std::ios::eofbit);
+        }
+    }
+    ~FileEntityIstream() override = default;
+    FileEntityMeta get_meta() { return meta_; }
 };
 
 #endif // BACKUPSUITE_BSTREAM_H

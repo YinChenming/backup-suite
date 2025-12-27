@@ -20,8 +20,13 @@ void TarFile::init_db_from_tar()
     std::map<std::string, std::string> pax_headers;
     bool previous_special_block = false;
     bool last_block_all_zero = false;
-    while (ifs_->read(block, 512))
+    ifs_->seekg(0, std::ios::end);
+    size_t end_of_archive_offset = ifs_->tellg(), current_offset = 0;
+    ifs_->seekg(0, std::ios::beg);
+    while (current_offset < end_of_archive_offset)
     {
+        ifs_->read(block, 512);
+        current_offset += 512;
         if (ifs_->gcount() != 512)
         {
             is_valid_ = false;
@@ -60,7 +65,6 @@ void TarFile::init_db_from_tar()
         {
             break;
         }
-
         // 处理长文件名的情况
         // ReSharper disable once CppDFAConstantConditions
         if (previous_special_block)
@@ -93,6 +97,7 @@ void TarFile::init_db_from_tar()
                     TarBlock name_buffer{};
                     while (name_size > 0 && ifs_->read(name_buffer.block, sizeof(name_buffer)))
                     {
+                        current_offset += sizeof(name_buffer);
                         long_name.append(name_buffer.block, ifs_->gcount());
                         name_size -= ifs_->gcount();
                     }
@@ -110,7 +115,8 @@ void TarFile::init_db_from_tar()
                     }
                     meta.size = b64size;
                 }
-            } else if (standard_ == TarStandard::POSIX_2001_PAX)
+            }
+            else if (standard_ == TarStandard::POSIX_2001_PAX)
             {
                 if (header->type_flag == 'x')   // PAX 扩展头
                 {
@@ -120,6 +126,7 @@ void TarFile::init_db_from_tar()
                     std::string pax_buffer;
                     pax_buffer.resize(pax_size);
                     ifs_->read(&pax_buffer[0], pax_size);
+                    current_offset += pax_size;
                     if (ifs_->gcount() != pax_size)
                     {
                         is_valid_ = false;
@@ -157,12 +164,19 @@ void TarFile::init_db_from_tar()
         while (!ifs_->eof() && size > 0)
         {
             ifs_->read(block, 512);
+            current_offset += 512;
             const auto gcount = ifs_->gcount();
+            if (gcount != 512)
+            {
+                is_valid_ = false;
+                return;
+            }
             if (size <= gcount)
                 break;
             size -= gcount;
         }
     }
+    bool is_good = ifs_->good(), is_eof = ifs_->eof(), is_fail = ifs_->fail(), is_bad = ifs_->bad();
 }
 
 bool TarFile::insert_entity(const FileEntityMeta& meta, const int offset) const
@@ -269,6 +283,8 @@ FileEntityMeta TarFile::tar_header2file_meta(const TarFileHeader &header, TarSta
 // return nullptr if it's not a file, or file not found
 std::unique_ptr<TarFile::TarIstream> TarFile::get_file_stream(const std::filesystem::path& path) const
 {
+    if (!is_valid_ || !ifs_ || !ifs_->is_open())
+        return nullptr;
     // path like "/...", and not contain any driver letter
     if (path.has_root_name() || !path.is_relative())
         return nullptr; // cannot analyze a path starts with "C:\"
@@ -298,6 +314,12 @@ std::unique_ptr<TarFile::TarIstream> TarFile::get_file_stream(const std::filesys
     {
         const auto entity = db_.query_one<db::TarInitializationStrategy::SQLEntity>(std::move(stmt));
         auto [meta, offset] = sql_entity2file_meta(entity);
+        char block[512];
+        const bool is_eof = ifs_->eof(), is_open = ifs_->is_open(), is_bad = ifs_->bad(), is_fail = ifs_->fail();
+        ifs_->seekg(0, std::ios::end);
+        const auto file_size = ifs_->tellg();
+        ifs_->seekg(offset, std::ios::beg);
+        ifs_->read(block, sizeof(TarFileHeader));
         tar = std::make_unique<TarIstream>(*ifs_.get(), offset, meta);
     } catch (const std::exception& e)
     {

@@ -12,6 +12,7 @@ set(CORE_TEST_SOURCE
         src/core/core_utils.cpp
         src/core/test_core_backup_suite.cpp
         src/core/test_core_compress.cpp
+        src/core/test_core_compress_device.cpp
 )
 
 add_executable(core_tests

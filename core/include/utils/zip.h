@@ -15,6 +15,7 @@
 #include "utils/database_strategies.h"
 #include "filesystem/entities.h"
 #include "utils/fs_deleter.h"
+#include "utils/streams.h"
 
 #ifdef _MSC_VER
 #pragma warning(disable : 4200) // 禁用 MSVC 零数组警告
@@ -247,66 +248,10 @@ namespace zip
 
     class BACKUP_SUITE_API ZipFile
     {
-      private:
-        class ZipIstreamBuf: public std::streambuf
-        {
-            std::ifstream &file_;
-            int offset_;
-            size_t size_;
-            static constexpr size_t buffer_size_ = 8192;
-            char buffer_[buffer_size_] = {};
-        public:
-            explicit ZipIstreamBuf(std::ifstream &ifs, int offset, size_t size):
-                file_(ifs), offset_(offset), size_(size)
-            {
-                setg(nullptr, nullptr, nullptr);
-                if (offset < 0 || size == 0 || !ifs.is_open() || ifs.eof())
-                {
-                    offset_ = size_ = 0;
-                    return;
-                }
-            }
-            ~ZipIstreamBuf() override = default;
-            int_type underflow() override
-            {
-                if (gptr() < egptr())
-                {
-                    return traits_type::to_int_type(*gptr());
-                }
-                file_.seekg(offset_, std::ios::beg);
-                size_t to_read = std::min(buffer_size_, size_);
-                file_.read(buffer_, to_read);
-                offset_ += to_read;
-                size_ -= to_read;
-                if (to_read == 0 || file_.eof() || file_.gcount() != static_cast<std::streamsize>(to_read))
-                {
-                    return traits_type::eof();
-                }
-                setg(buffer_, buffer_, buffer_ + to_read);
-                return traits_type::to_int_type(*gptr());
-            }
-        };
-
-        class ZipIstream: public std::istream
-        {
-            FileEntityMeta meta_;
-            std::ifstream &file_;
-            std::unique_ptr<ZipIstreamBuf> buffer_;
-        public:
-            ZipIstream(std::ifstream &ifs, const int offset, const FileEntityMeta &meta):
-                std::istream(nullptr), meta_(meta), file_(ifs), buffer_(std::make_unique<ZipIstreamBuf>(ifs, offset, meta.size))
-            {
-                rdbuf(buffer_.get());
-                if (!meta_.size || !ifs.is_open() || ifs.eof())
-                {
-                    setstate(std::ios::eofbit);
-                }
-            }
-            ~ZipIstream() override = default;
-            FileEntityMeta get_meta() { return meta_; }
-        };
-
       public:
+        using ZipIstreamBuf = IstreamBuf;
+        using ZipIstream = FileEntityIstream;
+
         // 中央目录记录结构体，包含文件名
         // 这里必须保证不要直接将CentralDirectoryEntry写入内存，ZipCentralDirectoryFileHeader的file_name由开头的std::string管理
         struct CentralDirectoryEntry
@@ -388,7 +333,10 @@ namespace zip
          * @brief 完成zip归档创建
          */
         void close();
-        bool is_open() const { return is_valid_; }
+        [[nodiscard]] bool is_open() const { return is_valid_; }
+        [[nodiscard]] bool is_readable() const { return is_valid_ && ifs_ && ifs_->is_open(); }
+        [[nodiscard]] bool is_writable() const { return is_valid_ && ofs_ && ofs_->is_open(); }
+        [[nodiscard]] std::string comment() const { return comment_; }
 
         void set_version_made_by(const header::ZipVersionNeeded version)
         {
@@ -418,9 +366,6 @@ namespace zip
         [[nodiscard]] bool insert_entity(const header::ZipCentralDirectoryFileHeader*, const std::string& file_name,
                                          const std::vector<uint8_t>& extra_field,
                                          const std::string& file_comment) const;
-
-        void write_central_directory_record(const FileEntityMeta& meta, uint32_t local_header_offset,
-                                            uint32_t compressed_size, uint32_t crc32);
 
         // 扩展字段解读
         struct NTFSExtraField

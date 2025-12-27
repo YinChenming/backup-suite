@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <type_traits>
+#include <filesystem>
 
 #include "api.h"
 
@@ -127,7 +128,6 @@ namespace db
         }
     };
 
-
     class BACKUP_SUITE_API Database
     {
         struct SqliteDeleter
@@ -149,7 +149,7 @@ namespace db
         using stmtPointer = std::unique_ptr<sqlite3_stmt, StatementDeleter>;
 
         std::unique_ptr<sqlite3, SqliteDeleter> db_handle_ = nullptr;
-
+        std::string db_path_{};
     public:
         template<typename T>
         class ResultSetIterator
@@ -203,7 +203,6 @@ namespace db
                 return is_done_ != other.is_done_ || stmt_ != other.stmt_;
             }
         };
-
         template<typename T>
         class ResultSet
         {
@@ -225,18 +224,17 @@ namespace db
                 return ResultSetIterator<T>();
             }
         };
-
-
     protected:
-        void  initialize(const DatabaseInitializationStrategy &strategy) const;
+        void initialize(const DatabaseInitializationStrategy &strategy) const;
     public:
-        explicit Database(DatabaseInitializationStrategy *strategy = nullptr)
-            // : Database("test.db", strategy) { }
-            : Database(":memory:", strategy) { }
-        explicit Database(const std::string& dbPath, DatabaseInitializationStrategy *strategy = nullptr)
+        explicit Database(const DatabaseInitializationStrategy *strategy = nullptr)
+            // : Database("test.db", strategy)
+            : Database(":memory:", strategy)
+        { }
+        explicit Database(const std::string& db_path, const DatabaseInitializationStrategy *strategy = nullptr): db_path_(db_path!=":memory:" ? db_path : "")
         {
             sqlite3 *conn;
-            if (const int rc = sqlite3_open(dbPath.c_str(), &conn); rc != SQLITE_OK)
+            if (const int rc = sqlite3_open(db_path.c_str(), &conn); rc != SQLITE_OK)
             {
                 db_handle_ = nullptr;
             } else
@@ -252,6 +250,15 @@ namespace db
         virtual ~Database()
         {
             db_handle_.release();
+            if (!db_path_.empty() && db_path_ != ":memory:")
+            {
+                if (std::filesystem::exists(db_path_))
+                {
+                    try {
+                        std::filesystem::remove(db_path_);
+                    } catch (...) {}
+                }
+            }
         }
         [[nodiscard]] bool is_open() const { return db_handle_ != nullptr; }
         [[nodiscard]] bool is_initialized() const;

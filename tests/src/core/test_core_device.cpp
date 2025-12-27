@@ -48,8 +48,6 @@ TEST_F(TestSystemDevice, TestFolder)
     EXPECT_EQ(meta->type, FileEntityType::Directory);
     print_folder(*folder, GTEST_LOG_(INFO) << "Test Root Folder:\n");
 }
-
-
 TEST_F(TestSystemDevice, TestFiles)
 {
     // test normal file
@@ -98,7 +96,6 @@ TEST_F(TestSystemDevice, TestFiles)
     EXPECT_EQ(meta->posix_mode, 0444);
     print_meta(*meta, GTEST_LOG_(INFO) << "Test Readonly File:\n");
 }
-
 TEST_F(TestSystemDevice, TestSymbolicLink)
 {
     if (!test_symbolic_link)
@@ -118,7 +115,6 @@ TEST_F(TestSystemDevice, TestSymbolicLink)
     EXPECT_EQ(meta->type, FileEntityType::SymbolicLink);
     print_meta(*meta, GTEST_LOG_(INFO) << "Test Symbolic Link File:\n");
 }
-
 TEST_F(TestSystemDevice, TestWriteFolder)
 {
     auto folder = device.get_folder(test_folder);
@@ -135,7 +131,6 @@ TEST_F(TestSystemDevice, TestWriteFolder)
 
     meta = folder->get_meta();
     new_meta = new_folder->get_meta();
-
 
 #ifdef CHECK_ACCESS_TIME
     EXPECT_EQ(
@@ -158,7 +153,6 @@ TEST_F(TestSystemDevice, TestWriteFolder)
 
     print_folder(*new_folder, GTEST_LOG_(INFO) << "Test Write Folder:\n");
 }
-
 TEST_F(TestSystemDevice, TestWriteFile)
 {
     auto file = dynamic_cast<PhysicalDeviceReadableFile*>(device.get_file(test_folder / "test_file.txt").release());
@@ -173,7 +167,6 @@ TEST_F(TestSystemDevice, TestWriteFile)
     EXPECT_EQ(std::string(std::istreambuf_iterator(new_file->get_stream()), {}), test_file_content);
     new_file->close();
     new_meta = new_file->get_meta();
-
 
 #ifdef CHECK_ACCESS_TIME
     EXPECT_EQ(
@@ -208,7 +201,6 @@ TEST_F(TestSystemDevice, TestWriteFile)
     new_file->close();
     new_meta = new_file->get_meta();
 
-
 #ifdef CHECK_ACCESS_TIME
     EXPECT_EQ(
         std::chrono::duration_cast<std::chrono::microseconds>(new_meta.access_time.time_since_epoch()).count(),
@@ -241,7 +233,6 @@ TEST_F(TestSystemDevice, TestWriteFile)
     EXPECT_EQ(std::string(std::istreambuf_iterator(new_file->get_stream()), {}), test_file_hide_content);
     new_file->close();
     new_meta = new_file->get_meta();
-
 
 #ifdef CHECK_ACCESS_TIME
     EXPECT_EQ(

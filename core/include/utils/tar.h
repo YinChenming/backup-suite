@@ -18,6 +18,8 @@
 #include "filesystem/entities.h"
 #include "database.h"
 #include "utils/fs_deleter.h"
+#include "utils/streams.h"
+#include "utils/database_strategies.h"
 
 using fs_deleter::FStreamDeleter;
 using fs_deleter::IFStreamPointer;
@@ -25,73 +27,7 @@ using fs_deleter::OFStreamPointer;
 
 namespace tar
 {
-    class BACKUP_SUITE_API TarInitializationStrategy final : public db::DatabaseInitializationStrategy
-    {
-    public: using SQLEntity = std::tuple<
-            std::string,    // path
-            int,            // type
-            int,            // size
-            int,            // offset
-            long long,      // creation_time
-            long long,      // modification_time
-            long long,      // access_time
-            int,            // posix_mode
-            int,            // uid
-            int,            // gid
-            std::string,    // user_name
-            std::string,    // group_name
-            int,            // windows_attributes
-            std::string,    // symbolic_link_target
-            int,            // device_major
-            int             // device_minor
-        >;
-        inline const static std::string SQLEntityColumns = (" path, type, size, offset, creation_time, modification_time, "
-                                                        "access_time, posix_mode, uid, gid, user_name, group_name, "
-                                                        "windows_attributes, symbolic_link_target, device_major, "
-                                                        "device_minor ");
-    protected:
-        [[nodiscard]] std::string get_initialization_sql() const override
-        {
-            return (
-                "CREATE TABLE IF NOT EXISTS entity_type("
-                "id INTEGER PRIMARY KEY UNIQUE,"
-                "name TEXT NOT NULL UNIQUE"
-                ");"
-
-                "INSERT INTO entity_type (id, name) VALUES "
-                "(0, 'unknown'),"
-                "(1, 'regular_file'),"
-                "(2, 'directory'),"
-                "(4, 'symbolic_link'),"
-                "(8, 'fifo'),"
-                "(16, 'socket'),"
-                "(32, 'block_device'),"
-                "(64, 'character_device')"
-                ";"
-
-                "CREATE TABLE IF NOT EXISTS entity("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE,"
-                "path TEXT NOT NULL,"
-                "type INTEGER NOT NULL DEFAULT 0,"
-                "size INTEGER NOT NULL,"
-                "offset INTEGER NOT NULL DEFAULT 0,"
-                "creation_time DATETIME NOT NULL,"
-                "modification_time DATETIME NOT NULL,"
-                "access_time DATETIME NOT NULL,"
-                "posix_mode INTEGER NOT NULL DEFAULT 0,"
-                "uid INTEGER NOT NULL DEFAULT 0,"
-                "gid INTEGER NOT NULL DEFAULT 0,"
-                "user_name TEXT NOT NULL DEFAULT '',"
-                "group_name TEXT NOT NULL DEFAULT '',"
-                "windows_attributes INTEGER NOT NULL DEFAULT 0,"
-                "symbolic_link_target TEXT,"
-                "device_major INTEGER DEFAULT 0,"
-                "device_minor INTEGER DEFAULT 0,"
-                "FOREIGN KEY(type) REFERENCES entity_type(id) ON DELETE CASCADE"
-                ");"
-            );
-        }
-    };
+    using TarInitializationStrategy = db::TarInitializationStrategy;
 
     enum class TarStandard
     {
@@ -142,65 +78,12 @@ namespace tar
 
     class BACKUP_SUITE_API TarFile
     {
-        class TarIstreamBuf: public std::streambuf
-        {
-            std::ifstream &file_;
-            int offset_;
-            size_t size_;
-            static constexpr size_t buffer_size_ = 8192;
-            char buffer_[buffer_size_] = {};
-        public: explicit TarIstreamBuf(std::ifstream &ifs, int offset, size_t size):
-            file_(ifs), offset_(offset), size_(size)
-        {
-            setg(nullptr, nullptr, nullptr);
-            if (offset < 0 || size == 0 || !ifs.is_open() || ifs.eof())
-            {
-                offset_ = size_ = 0;
-                return;
-            }
-        }
-            ~TarIstreamBuf() override = default;
-            int_type underflow() override
-            {
-                if (gptr() < egptr())
-                {
-                    return traits_type::to_int_type(*gptr());
-                }
-                file_.seekg(offset_, std::ios::beg);
-                size_t to_read = std::min(buffer_size_, size_);
-                file_.read(buffer_, to_read);
-                offset_ += to_read;
-                size_ -= to_read;
-                if (to_read == 0 || file_.eof() || file_.gcount() != static_cast<std::streamsize>(to_read))
-                {
-                    return traits_type::eof();
-                }
-                setg(buffer_, buffer_, buffer_ + to_read);
-                return traits_type::to_int_type(*gptr());
-            }
-        };
-
-        class TarIstream: public std::istream
-        {
-            FileEntityMeta meta_;
-            std::ifstream &file_;
-            std::unique_ptr<TarIstreamBuf> buffer_;
-        public:
-            TarIstream(std::ifstream &ifs, const int offset, const FileEntityMeta &meta):
-                std::istream(nullptr), meta_(meta), file_(ifs), buffer_(std::make_unique<TarIstreamBuf>(ifs, offset, meta.size))
-            {
-                rdbuf(buffer_.get());
-                if (!meta_.size || !ifs.is_open() || ifs.eof())
-                {
-                    setstate(std::ios::eofbit);
-                }
-            }
-            ~TarIstream() override = default;
-            FileEntityMeta get_meta() { return meta_; }
-        };
+    public:
+        using TarIstreamBuf = IstreamBuf;
+        using TarIstream = FileEntityIstream;
 
         static constexpr int TarBlockSize = sizeof(TarBlock);   // 512 bytes
-
+    private:
         db::Database db_;
         IFStreamPointer ifs_;
         OFStreamPointer ofs_;
@@ -236,6 +119,11 @@ namespace tar
             if (mode == TarMode::input)
             {
                 ifs_ = IFStreamPointer(new std::ifstream(path, std::ios::binary), FStreamDeleter<std::ifstream>());
+                if (!ifs_ || !ifs_->is_open())
+                {
+                    is_valid_ = false;
+                    return;
+                }
                 init_db_from_tar();
             } else
             {
@@ -253,6 +141,9 @@ namespace tar
         bool add_entity(ReadableFile& file);
         // 关闭文件流,在output模式中表示将数据写入文件中,在input模式中表示单纯的关闭文件流,应当在~TarFile()中自动调用
         void close();
+        [[nodiscard]] bool is_open() const { return is_valid_; }
+        [[nodiscard]] bool readable() const { return is_valid_ && ifs_ && ifs_->is_open(); }
+        [[nodiscard]] bool writable() const { return is_valid_ && ofs_ && ofs_->is_open(); }
     };
 }
 #endif // TAR_H
