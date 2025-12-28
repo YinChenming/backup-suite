@@ -120,6 +120,10 @@ public:
     {
         encryption_method_ = method;
     }
+    [[nodiscard]] bool is_invalid_password() const
+    {
+        return zip_file_.is_invalid_password();
+    }
 
 private:
     Mode mode_;

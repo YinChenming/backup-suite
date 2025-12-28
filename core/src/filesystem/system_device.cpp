@@ -336,7 +336,9 @@ bool WindowsDevice::_write_file(ReadableFile &file, const bool force)
     ofs.flush();
     ofs.close();
 
-    return set_file_attributes(meta);
+    // 尝试设置文件属性，但如果失败不影响恢复操作的成功
+    set_file_attributes(meta);
+    return true;
 }
 
 bool WindowsDevice::write_folder(Folder &folder)
@@ -349,8 +351,16 @@ bool WindowsDevice::write_folder(Folder &folder)
     }
     meta.type = FileEntityType::Directory;
     const auto realpath = root / folder.get_meta().path;
-    if (exists(realpath))
-        return false;
+    // 如果目录已存在，直接返回成功（用于恢复操作）
+    if (exists(realpath)) {
+        // 检查是否为目录而不是文件
+        if (std::filesystem::is_directory(realpath)) {
+            return set_file_attributes(meta);
+        } else {
+            // 如果是文件而不是目录，返回失败
+            return false;
+        }
+    }
     if (!std::filesystem::create_directories(realpath))
         return false;
     return set_file_attributes(meta);

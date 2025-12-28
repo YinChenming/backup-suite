@@ -6,6 +6,7 @@
 #define BACKUPSUITE_CRC32_H
 
 #include <cstdint>
+#include <cstddef>
 #include <type_traits>
 
 #include "api.h"

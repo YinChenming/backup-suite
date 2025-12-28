@@ -25,6 +25,9 @@ public:
     // ReSharper disable once CppNonExplicitConvertingConstructor
     BackupController(const BackupConfig& cfg): config(cfg) {} // NOLINT(*-explicit-constructor)
     void run_backup(Device& from, Device& to) const;
+    bool run_restore(Device& from, Device& to) const;
+private:
+    bool copy_folder_recursive(Device& from, Device& to, const std::filesystem::path& path) const;
 };
 
 #endif // BACKUPSUITE_BACKUP_CONTROLLER_H
