@@ -17,7 +17,8 @@ void print_usage(const char* program_name) {
     std::cout << "  -r, --restore         Restore mode" << std::endl;
     std::cout << "  -t, --tar             Use TAR format" << std::endl;
     std::cout << "  -z, --zip             Use ZIP format" << std::endl;
-    std::cout << "  -e, --encrypt         Enable ZIP encryption (requires -z)" << std::endl;
+    std::cout << "  -7z, --7z             Use 7-Zip format" << std::endl;
+    std::cout << "  -e, --encrypt         Enable encryption (ZIP/7Z only)" << std::endl;
     std::cout << "  -p, --password PASS   Set password (requires -e)" << std::endl;
     std::cout << "  -v, --verbose         Verbose output" << std::endl;
     std::cout << "  -h, --help            Show this help information" << std::endl;
@@ -32,11 +33,17 @@ void print_usage(const char* program_name) {
     std::cout << "  Backup folder to TAR:" << std::endl;
     std::cout << "    " << program_name << " -t /path/to/source /path/to/backup.tar" << std::endl;
     std::cout << std::endl;
+    std::cout << "  Backup folder to 7Z:" << std::endl;
+    std::cout << "    " << program_name << " -7z /path/to/source /path/to/backup.7z" << std::endl;
+    std::cout << std::endl;
     std::cout << "  Restore from ZIP to folder:" << std::endl;
     std::cout << "    " << program_name << " -r -z /path/to/backup.zip /path/to/restore" << std::endl;
     std::cout << std::endl;
     std::cout << "  Restore from encrypted ZIP (will prompt for password):" << std::endl;
     std::cout << "    " << program_name << " -r -z /path/to/backup.zip /path/to/restore" << std::endl;
+    std::cout << std::endl;
+    std::cout << "  Restore from 7Z to folder:" << std::endl;
+    std::cout << "    " << program_name << " -r -7z /path/to/backup.7z /path/to/restore" << std::endl;
 }
 
 bool parse_arguments(int argc, char* argv[], CLIOptions& options) {
@@ -60,9 +67,15 @@ bool parse_arguments(int argc, char* argv[], CLIOptions& options) {
         } else if (arg == "-t" || arg == "--tar") {
             options.use_tar = true;
             options.use_zip = false;
+            options.use_7z = false;
         } else if (arg == "-z" || arg == "--zip") {
             options.use_zip = true;
             options.use_tar = false;
+            options.use_7z = false;
+        } else if (arg == "-7z" || arg == "--7z") {
+            options.use_7z = true;
+            options.use_tar = false;
+            options.use_zip = false;
         } else if (arg == "-e" || arg == "--encrypt") {
             options.use_encryption = true;
         } else if (arg == "-p" || arg == "--password") {
@@ -107,14 +120,14 @@ bool validate_options(const CLIOptions& options) {
     }
 
     // Check compression format
-    if (!options.use_tar && !options.use_zip) {
-        std::cerr << "Error: Must specify compression format (-t or -z)" << std::endl;
+    if (!options.use_tar && !options.use_zip && !options.use_7z) {
+        std::cerr << "Error: Must specify compression format (-t or -z or -7z)" << std::endl;
         return false;
     }
 
     // Check encryption options
-    if (options.use_encryption && !options.use_zip) {
-        std::cerr << "Error: Encryption option (-e) can only be used with ZIP format" << std::endl;
+    if (options.use_encryption && !(options.use_zip || options.use_7z)) {
+        std::cerr << "Error: Encryption option (-e) can only be used with ZIP or 7Z format" << std::endl;
         return false;
     }
 
@@ -127,7 +140,7 @@ bool validate_options(const CLIOptions& options) {
 }
 
 bool prompt_for_password(std::string& password) {
-    std::cout << "Enter ZIP password: ";
+    std::cout << "Enter password (ZIP/7Z): ";
     std::getline(std::cin, password);
     return !password.empty();
 }
@@ -154,7 +167,7 @@ int main(int argc, char* argv[]) {
                 std::cout << "Starting backup operation..." << std::endl;
                 std::cout << "Source path: " << options.source_path << std::endl;
                 std::cout << "Target path: " << options.target_path << std::endl;
-                std::cout << "Format: " << (options.use_tar ? "TAR" : "ZIP") << std::endl;
+                std::cout << "Format: " << (options.use_tar ? "TAR" : options.use_zip ? "ZIP" : "7Z") << std::endl;
                 if (options.use_encryption) {
                     std::cout << "Encryption: Enabled" << std::endl;
                 }
@@ -216,6 +229,31 @@ int main(int argc, char* argv[]) {
                 if (options.verbose) {
                     std::cout << "Backup completed!" << std::endl;
                 }
+            } else if (options.use_7z) {
+                std::vector<uint8_t> password_vec;
+                if (options.use_encryption) {
+                    password_vec.assign(options.password.begin(), options.password.end());
+                }
+
+                SevenZipDevice target_device(options.target_path, SevenZipDevice::Mode::WriteOnly,
+                                             sevenzip::CompressionMethod::LZMA2,
+                                             options.use_encryption ? sevenzip::EncryptionMethod::AES256 : sevenzip::EncryptionMethod::None,
+                                             password_vec);
+                if (!target_device.is_open()) {
+                    std::cerr << "Error: Cannot create 7Z file: " << options.target_path << std::endl;
+                    return 1;
+                }
+
+                if (options.verbose) {
+                    std::cout << "Creating 7Z backup..." << std::endl;
+                }
+
+                controller.run_backup(source_device, target_device);
+                target_device.close();
+
+                if (options.verbose) {
+                    std::cout << "Backup completed!" << std::endl;
+                }
             }
 
         } else if (options.restore_mode) {
@@ -223,7 +261,7 @@ int main(int argc, char* argv[]) {
                 std::cout << "开始恢复操作..." << std::endl;
                 std::cout << "源路径: " << options.source_path << std::endl;
                 std::cout << "目标路径: " << options.target_path << std::endl;
-                std::cout << "格式: " << (options.use_tar ? "TAR" : "ZIP") << std::endl;
+                std::cout << "格式: " << (options.use_tar ? "TAR" : options.use_zip ? "ZIP" : "7Z") << std::endl;
             }
 
             // 恢复操作可以覆盖现有文件，不需要检查目标目录是否为空
@@ -300,8 +338,56 @@ int main(int argc, char* argv[]) {
                     std::cerr << "错误: 恢复操作失败" << std::endl;
                     return 1;
                 }
+            } else if (options.use_7z) {
+                // 检查7Z文件是否需要密码
+                std::vector<uint8_t> password_vec;
+                {
+                    SevenZipDevice temp_device(options.source_path, SevenZipDevice::Mode::ReadOnly);
+                    if (!temp_device.is_open()) {
+                        std::cerr << "错误: 无法打开 7Z 文件: " << options.source_path << std::endl;
+                        return 1;
+                    }
+                    if (temp_device.is_invalid_password()) {
+                        if (options.password.empty()) {
+                            if (!prompt_for_password(options.password)) {
+                                std::cerr << "错误: 未提供密码" << std::endl;
+                                return 1;
+                            }
+                        }
+                        password_vec.assign(options.password.begin(), options.password.end());
+                    }
+                }
+
+                SevenZipDevice source_device(options.source_path, SevenZipDevice::Mode::ReadOnly,
+                                             sevenzip::CompressionMethod::LZMA2,
+                                             password_vec.empty() ? sevenzip::EncryptionMethod::None : sevenzip::EncryptionMethod::AES256,
+                                             password_vec);
+                if (!source_device.is_open()) {
+                    if (source_device.is_invalid_password()) {
+                        std::cerr << "错误: 密码不正确或未提供密码" << std::endl;
+                    } else {
+                        std::cerr << "错误: 无法打开 7Z 文件: " << options.source_path << std::endl;
+                    }
+                    return 1;
+                }
+
+                if (options.verbose) {
+                    std::cout << "正在从 7Z 文件恢复..." << std::endl;
+                }
+
+                bool success = controller.run_restore(source_device, target_device);
+                source_device.close();
+
+                if (success) {
+                    if (options.verbose) {
+                        std::cout << "恢复完成!" << std::endl;
+                    }
+                } else {
+                    std::cerr << "错误: 恢复操作失败" << std::endl;
+                    return 1;
+                }
             }
-        }
+            }
 
         std::cout << "操作成功完成!" << std::endl;
         return 0;

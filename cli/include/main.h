@@ -11,6 +11,7 @@
 #include "filesystem/system_device.h"
 #include "backup/backup_controller.h"
 #include "filesystem/compresses_device.h"
+#include "filesystem/seven_zip_device.h"
 
 struct CLIOptions {
     bool backup_mode = false;
@@ -19,6 +20,7 @@ struct CLIOptions {
     std::filesystem::path target_path;
     bool use_tar = false;
     bool use_zip = false;
+    bool use_7z = false;
     bool use_encryption = false;
     std::string password;
     bool verbose = false;

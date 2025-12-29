@@ -321,6 +321,13 @@ bool WindowsDevice::_write_file(ReadableFile &file, const bool force)
     {
         throw std::runtime_error("Creating symbolic links is not supported now.");    // TODO: 创建符号链接
     }
+    // 确保父目录存在，避免在未创建目录时写入文件失败
+    try {
+        if (!meta.path.empty())
+            std::filesystem::create_directories(realpath.parent_path());
+    } catch (...) {
+        // 目录创建失败时仍尝试写入，交由 ofstream 报错返回
+    }
     std::ofstream ofs(realpath, std::ios::out | std::ios::binary | std::ios::trunc);
     std::unique_ptr<std::vector<std::byte>> data = file.read(CACHE_SIZE);
     while (data && !data->empty())

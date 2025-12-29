@@ -75,33 +75,39 @@ bool BackupController::copy_folder_recursive(Device& from, Device& to, const std
             to.write_folder(*folder);
         }
 
-        // 遍历文件夹中的所有子项
+        // 为了避免在未创建父目录前写入文件，优先处理目录，其次处理文件
+        std::vector<FileEntity> dirs;
+        std::vector<FileEntity> files;
+        dirs.reserve(folder->get_children().size());
+        files.reserve(folder->get_children().size());
         for (auto& child : folder->get_children()) {
             const auto& child_meta = child.get_meta();
-
-            // 根据配置过滤文件类型
             if (!(static_cast<unsigned int>(child_meta.type) & static_cast<unsigned int>(config.backup_file_types))) {
                 continue;
             }
+            if (child_meta.type == FileEntityType::Directory) dirs.emplace_back(child);
+            else if (child_meta.type == FileEntityType::RegularFile) files.emplace_back(child);
+        }
 
-            if (child_meta.type == FileEntityType::Directory) {
-                // 递归处理子目录
-                if (!copy_folder_recursive(from, to, child_meta.path)) {
-                    return false;
-                }
-            } else if (child_meta.type == FileEntityType::RegularFile) {
-                // 复制文件
-                auto source_file = from.get_file(child_meta.path);
-                if (!source_file) {
-                    continue;
-                }
-
-                if (!to.write_file_force(*source_file)) {
-                    source_file->close();
-                    return false;
-                }
-                source_file->close();
+        // 先递归处理目录
+        for (auto& child : dirs) {
+            const auto& child_meta = child.get_meta();
+            if (!copy_folder_recursive(from, to, child_meta.path)) {
+                return false;
             }
+        }
+        // 再处理文件
+        for (auto& child : files) {
+            const auto& child_meta = child.get_meta();
+            auto source_file = from.get_file(child_meta.path);
+            if (!source_file) {
+                continue;
+            }
+            if (!to.write_file_force(*source_file)) {
+                source_file->close();
+                return false;
+            }
+            source_file->close();
         }
 
         return true;

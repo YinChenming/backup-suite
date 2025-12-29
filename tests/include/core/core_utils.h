@@ -36,7 +36,7 @@ bool run_script_as_admin(const std::filesystem::path& script_path);
 class TestSystemDevice: public ::testing::Test
 {
 public:
-    inline static const std::filesystem::path root = std::filesystem::current_path() / "test";
+    inline static const std::filesystem::path root = std::filesystem::temp_directory_path() / "backup_suite_tests";
     inline static const std::filesystem::path test_folder = "test_folder";
     inline static const std::filesystem::path test_write_folder = "test_write_folder";
 
