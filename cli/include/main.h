@@ -24,6 +24,21 @@ struct CLIOptions {
     bool use_encryption = false;
     std::string password;
     bool verbose = false;
+
+    // 过滤选项
+    std::vector<std::string> include_patterns;
+    std::vector<std::string> exclude_patterns;
+    bool use_regex = false;
+    std::vector<std::string> include_extensions;
+    std::vector<std::string> exclude_extensions;
+    std::string time_after;   // 格式: YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS
+    std::string time_before;
+    std::string min_size;     // 支持单位: K, M, G (如 "10M", "1.5G")
+    std::string max_size;
+    std::vector<std::string> include_users;
+    std::vector<std::string> exclude_users;
+    std::vector<std::string> include_groups;
+    std::vector<std::string> exclude_groups;
 };
 
 void print_usage(const char* program_name);

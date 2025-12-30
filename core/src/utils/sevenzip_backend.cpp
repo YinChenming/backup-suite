@@ -8,8 +8,11 @@
 #include <chrono>
 #include <algorithm>
 #include <fstream>
+#include <sstream>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
+#include <iostream>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -238,7 +241,12 @@ bool P7zipBackend::open(const std::filesystem::path& archive, ISevenZipBackend::
         const char* pathname = archive_entry_pathname(entry);
         if (!pathname) { archive_read_data_skip(a); continue; }
         FileEntityMeta meta{};
-        meta.path = std::filesystem::path(std::string(pathname));
+        std::string path_str(pathname);
+        // 移除尾部斜杠进行规范化（避免重复的 "subdir" 和 "subdir/"）
+        while (!path_str.empty() && (path_str.back() == '/' || path_str.back() == '\\')) {
+            path_str.pop_back();
+        }
+        meta.path = std::filesystem::path(path_str);
         meta.size = static_cast<uint64_t>(archive_entry_size(entry));
         meta.type = filetype_from_archive_entry(static_cast<unsigned int>(archive_entry_filetype(entry)));
         set_times_from_entry(meta, entry);
@@ -278,6 +286,17 @@ bool P7zipBackend::open(const std::filesystem::path& archive, ISevenZipBackend::
             disk_meta_.emplace(d, std::move(m));
         }
     } catch (...) { /* best-effort */ }
+
+    // Windows 路径规范化：将所有 / 转换为 \
+    #ifdef _WIN32
+    std::unordered_map<std::filesystem::path, FileEntityMeta> normalized_meta;
+    for (auto& [p, meta] : disk_meta_) {
+        std::string path_str = p.generic_string();
+        std::replace(path_str.begin(), path_str.end(), '/', '\\');
+        std::filesystem::path normalized_p(path_str);
+        meta.path = normalized_p;
+        normalized_meta[normalized_p] = meta;
+    }
     disk_index_built_ = true;
     open_ = true;
     return true;
@@ -320,10 +339,10 @@ void P7zipBackend::close()
             }
             if (!password_.empty() && encryption_ != sevenzip::EncryptionMethod::None)
             {
-                // 7z uses AES-256; map all AESx to -p and enable header encryption
+                // 7z uses AES-256; map all AESx to -p without header encryption (libarchive doesn't support encrypted headers)
                 std::wstring wpw(password_.begin(), password_.end());
                 args.emplace_back(L"-p" + wpw);
-                args.emplace_back(L"-mhe=on");
+                args.emplace_back(L"-mhe=off");
             }
             std::wstring cmdLine = L"\"" + exe + L"\"";
             for (const auto& arg : args)
@@ -350,8 +369,8 @@ void P7zipBackend::close()
             }
             if (!password_.empty() && encryption_ != sevenzip::EncryptionMethod::None)
             {
-                // 7z uses AES-256; map all AESx to -p and enable header encryption
-                opts += " -p" + to_string_password(password_) + " -mhe=on";
+                // 7z uses AES-256; map all AESx to -p without header encryption (libarchive doesn't support encrypted headers)
+                opts += " -p" + to_string_password(password_) + " -mhe=off";
             }
             auto quote = [](const std::filesystem::path& p){ return std::string("\"") + p.string() + "\""; };
             auto quote_cmd = [](const std::string& s){ return std::string("\"") + s + "\""; };
@@ -388,7 +407,7 @@ void P7zipBackend::close()
             {
                 std::wstring wpw(password_.begin(), password_.end());
                 args.emplace_back(L"-p" + wpw);
-                args.emplace_back(L"-mhe=on");
+                args.emplace_back(L"-mhe=off");
             }
             std::wstring cmdLine = L"\"" + exe + L"\"";
             for (const auto& arg : args)
@@ -415,7 +434,7 @@ void P7zipBackend::close()
             }
             if (!password_.empty() && encryption_ != sevenzip::EncryptionMethod::None)
             {
-                opts += " -p" + to_string_password(password_) + " -mhe=on";
+                opts += " -p" + to_string_password(password_) + " -mhe=off";
             }
             auto quote = [](const std::filesystem::path& p){ return std::string("\"") + p.string() + "\""; };
             auto quote_cmd = [](const std::string& s){ return std::string("\"") + s + "\""; };
@@ -474,52 +493,75 @@ std::vector<sevenzip::DirEntry> P7zipBackend::list_dir(const std::filesystem::pa
 std::unique_ptr<ReadableFile> P7zipBackend::get_file(const std::filesystem::path& path)
 {
     if (mode_ == Mode::WriteOnly) return nullptr;
+
+    // 规范化路径以处理 Windows/POSIX 路径差异
+    auto normalize = [](const std::filesystem::path& p) {
+        std::string str = p.generic_string(); // 转为 forward slashes
+        while (!str.empty() && str.back() == '/') str.pop_back(); // 移除尾部斜杠
+        return std::filesystem::path(str);
+    };
+
+    const auto normalized_query = normalize(path);
+
     // Prefer on-disk archive
     if (disk_index_built_)
     {
-        auto mit = disk_meta_.find(path);
-        if (mit == disk_meta_.end()) return nullptr;
-        if ((mit->second.type & FileEntityType::RegularFile) != FileEntityType::RegularFile) return nullptr;
-
-        struct archive* a = archive_read_new();
-        if (!a) return nullptr;
-        archive_read_support_filter_all(a);
-        archive_read_support_format_7zip(a);
-        if (!password_.empty())
-        {
-            const std::string pw = to_string_password(password_);
-            archive_read_add_passphrase(a, pw.c_str());
-        }
-        if (archive_read_open_filename(a, archive_.string().c_str(), 10240) != ARCHIVE_OK)
-        {
-            archive_read_free(a);
-            return nullptr;
-        }
-        archive_entry* entry = nullptr;
-        std::shared_ptr<std::vector<std::byte>> data = std::make_shared<std::vector<std::byte>>();
-        std::vector<char> buf(64 * 1024);
-        int r = ARCHIVE_OK;
-        while ((r = archive_read_next_header(a, &entry)) == ARCHIVE_OK)
-        {
-            const char* pathname = archive_entry_pathname(entry);
-            if (!pathname) { archive_read_data_skip(a); continue; }
-            std::filesystem::path cur = std::filesystem::path(std::string(pathname));
-            if (cur == path)
-            {
-                la_ssize_t n = 0;
-                while ((n = archive_read_data(a, buf.data(), static_cast<size_t>(buf.size()))) > 0)
-                {
-                    size_t old = data->size();
-                    data->resize(old + static_cast<size_t>(n));
-                    std::memcpy(data->data() + old, buf.data(), static_cast<size_t>(n));
-                }
+        // 检查文件是否在 disk_meta_ 中
+        bool found_in_meta = false;
+        for (const auto& [key, meta] : disk_meta_) {
+            if (normalize(key) == normalized_query) {
+                if ((meta.type & FileEntityType::RegularFile) != FileEntityType::RegularFile) return nullptr;
+                found_in_meta = true;
                 break;
             }
-            archive_read_data_skip(a);
         }
-        archive_read_free(a);
-        if (!data || data->empty()) return nullptr;
-        return std::make_unique<MemoryReadableFile>(mit->second, std::move(data));
+
+        if (!found_in_meta) {
+            return nullptr;
+        }
+
+        // 使用系统 7z 命令提取文件内容
+        std::ostringstream cmd_stream;
+        cmd_stream << "7z x -so";
+
+        if (!password_.empty()) {
+            cmd_stream << " -p" << to_string_password(password_);
+        }
+
+        cmd_stream << " \"" << archive_.string() << "\" \"" << normalized_query.generic_string() << "\"";
+
+        std::string cmd = cmd_stream.str();
+
+        FILE* pipe = _popen(cmd.c_str(), "rb");
+        if (!pipe) {
+            return nullptr;
+        }
+
+        auto data = std::make_shared<std::vector<std::byte>>();
+        std::vector<char> buf(64 * 1024);
+        size_t n = 0;
+        while ((n = fread(buf.data(), 1, buf.size(), pipe)) > 0) {
+            size_t old = data->size();
+            data->resize(old + n);
+            std::memcpy(data->data() + old, buf.data(), n);
+        }
+
+        _pclose(pipe);
+
+        if (data->empty()) {
+            return nullptr;
+        }
+
+        // 获取文件元数据
+        FileEntityMeta meta;
+        for (const auto& [key, m] : disk_meta_) {
+            if (normalize(key) == normalized_query) {
+                meta = m;
+                break;
+            }
+        }
+
+        return std::make_unique<MemoryReadableFile>(meta, std::move(data));
     }
     // fallback to in-memory
     auto it = s_memMeta.find(path);
@@ -611,5 +653,3 @@ bool P7zipBackend::add_folder(Folder& folder)
     }
     return true;
 }
-
- 

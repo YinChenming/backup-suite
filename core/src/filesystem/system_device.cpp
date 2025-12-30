@@ -315,20 +315,25 @@ bool WindowsDevice::_write_file(ReadableFile &file, const bool force)
 {
     const auto meta = file.get_meta();
     const auto realpath = root / meta.path;
-    if (exists(realpath) && !force)
+    if (exists(realpath) && !force) {
         return false;
+    }
     if (meta.type == FileEntityType::SymbolicLink)
     {
-        throw std::runtime_error("Creating symbolic links is not supported now.");    // TODO: 创建符号链接
+        throw std::runtime_error("Creating symbolic links is not supported now.");
     }
     // 确保父目录存在，避免在未创建目录时写入文件失败
     try {
-        if (!meta.path.empty())
+        if (!meta.path.empty()) {
             std::filesystem::create_directories(realpath.parent_path());
-    } catch (...) {
-        // 目录创建失败时仍尝试写入，交由 ofstream 报错返回
+        }
+    } catch (const std::exception& e) {
+        return false;
     }
     std::ofstream ofs(realpath, std::ios::out | std::ios::binary | std::ios::trunc);
+    if (!ofs.is_open()) {
+        return false;
+    }
     std::unique_ptr<std::vector<std::byte>> data = file.read(CACHE_SIZE);
     while (data && !data->empty())
     {

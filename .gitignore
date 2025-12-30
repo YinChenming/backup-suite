@@ -201,3 +201,8 @@ CMakeSettings.json
 *.synctex.gz
 __latexindent_temp.tex
 *.synctex(busy)
+
+*.zip
+*.tar
+*.7z
+bin/

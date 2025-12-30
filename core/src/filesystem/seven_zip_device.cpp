@@ -3,6 +3,8 @@
 #include <memory>
 #include <vector>
 #include <string>
+#include <iostream>
+#include <algorithm>
 
 SevenZipDevice::SevenZipDevice(const std::filesystem::path& path,
                                SevenZipDevice::Mode mode,
@@ -73,16 +75,40 @@ std::unique_ptr<Folder> SevenZipDevice::get_folder(const std::filesystem::path& 
     FileEntityMeta meta{}; meta.path = path; meta.type = FileEntityType::Directory;
     std::vector<FileEntity> children;
     children.reserve(entries.size());
+
+    // 规范化目标路径以便比较（移除尾部斜杠）
+    auto normalize_path = [](const std::filesystem::path& p) {
+        std::string str = p.string();
+        while (!str.empty() && (str.back() == '/' || str.back() == '\\')) {
+            str.pop_back();
+        }
+        return std::filesystem::path(str);
+    };
+
+    const auto normalized_path = normalize_path(path);
+
     for (const auto& e : entries)
     {
+        // 规范化条目路径
+        FileEntityMeta norm_meta = e.meta;
+        norm_meta.path = normalize_path(e.meta.path);
+
+        // 在 Windows 上转换路径分隔符为反斜杠
+        #ifdef _WIN32
+        std::string path_str = norm_meta.path.generic_string();
+        std::replace(path_str.begin(), path_str.end(), '/', '\\');
+        norm_meta.path = std::filesystem::path(path_str);
+        #endif
+
         // 排除当前目录自身，避免递归时出现自包含导致无限递归
-        if (e.meta.path == path) continue;
+        if (norm_meta.path == normalized_path) continue;
         // 仅收集当前目录的直接子项：父路径等于当前路径
-        if (e.meta.path.parent_path() != path) continue;
-        if ((e.meta.type & FileEntityType::Directory) == FileEntityType::Directory)
-            children.emplace_back(Folder{e.meta, {}});
+        const auto parent = normalize_path(norm_meta.path.parent_path());
+        if (parent != normalized_path) continue;
+        if ((norm_meta.type & FileEntityType::Directory) == FileEntityType::Directory)
+            children.emplace_back(Folder{norm_meta, {}});
         else
-            children.emplace_back(File{e.meta});
+            children.emplace_back(File{norm_meta});
     }
     // 若无直接子项但存在条目（说明 entries 仅包含深层项），仍返回空孩子的目录对象
     return std::make_unique<Folder>(meta, children);

@@ -8,11 +8,14 @@
 #include <filesystem>
 #include <memory>
 #include <cstring>
+#include <chrono>
+#include <iomanip>
+#include <sstream>
 
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [options] <source_path> <target_path>" << std::endl;
     std::cout << std::endl;
-    std::cout << "Options:" << std::endl;
+    std::cout << "Basic Options:" << std::endl;
     std::cout << "  -b, --backup          Backup mode (default)" << std::endl;
     std::cout << "  -r, --restore         Restore mode" << std::endl;
     std::cout << "  -t, --tar             Use TAR format" << std::endl;
@@ -23,27 +26,36 @@ void print_usage(const char* program_name) {
     std::cout << "  -v, --verbose         Verbose output" << std::endl;
     std::cout << "  -h, --help            Show this help information" << std::endl;
     std::cout << std::endl;
+    std::cout << "Filter Options (Backup mode only):" << std::endl;
+    std::cout << "  --include PATTERN     Include files matching pattern (can be used multiple times)" << std::endl;
+    std::cout << "  --exclude PATTERN     Exclude files matching pattern (can be used multiple times)" << std::endl;
+    std::cout << "  --regex               Use regex for patterns instead of wildcards" << std::endl;
+    std::cout << "  --include-ext EXT     Include files with extension (e.g., .txt, .cpp)" << std::endl;
+    std::cout << "  --exclude-ext EXT     Exclude files with extension" << std::endl;
+    std::cout << "  --after DATE          Include files modified after date (YYYY-MM-DD)" << std::endl;
+    std::cout << "  --before DATE         Include files modified before date (YYYY-MM-DD)" << std::endl;
+    std::cout << "  --min-size SIZE       Minimum file size (e.g., 10K, 1M, 1.5G)" << std::endl;
+    std::cout << "  --max-size SIZE       Maximum file size" << std::endl;
+    std::cout << "  --include-user USER   Include files owned by user" << std::endl;
+    std::cout << "  --exclude-user USER   Exclude files owned by user" << std::endl;
+    std::cout << "  --include-group GROUP Include files owned by group" << std::endl;
+    std::cout << "  --exclude-group GROUP Exclude files owned by group" << std::endl;
+    std::cout << std::endl;
     std::cout << "Examples:" << std::endl;
-    std::cout << "  Backup folder to ZIP:" << std::endl;
+    std::cout << "  Basic backup:" << std::endl;
     std::cout << "    " << program_name << " -z /path/to/source /path/to/backup.zip" << std::endl;
     std::cout << std::endl;
-    std::cout << "  Backup folder to encrypted ZIP:" << std::endl;
-    std::cout << "    " << program_name << " -z -e -p mypassword /path/to/source /path/to/backup.zip" << std::endl;
+    std::cout << "  Backup only .cpp and .h files:" << std::endl;
+    std::cout << "    " << program_name << " -z --include-ext .cpp --include-ext .h /src backup.zip" << std::endl;
     std::cout << std::endl;
-    std::cout << "  Backup folder to TAR:" << std::endl;
-    std::cout << "    " << program_name << " -t /path/to/source /path/to/backup.tar" << std::endl;
+    std::cout << "  Backup excluding temporary files:" << std::endl;
+    std::cout << "    " << program_name << R"( -7z --exclude "*.tmp" --exclude "*.log" /src backup.7z)" << std::endl;
     std::cout << std::endl;
-    std::cout << "  Backup folder to 7Z:" << std::endl;
-    std::cout << "    " << program_name << " -7z /path/to/source /path/to/backup.7z" << std::endl;
+    std::cout << "  Backup files modified in last week (> 1MB):" << std::endl;
+    std::cout << "    " << program_name << " -z --after 2025-12-23 --min-size 1M /src backup.zip" << std::endl;
     std::cout << std::endl;
-    std::cout << "  Restore from ZIP to folder:" << std::endl;
+    std::cout << "  Restore:" << std::endl;
     std::cout << "    " << program_name << " -r -z /path/to/backup.zip /path/to/restore" << std::endl;
-    std::cout << std::endl;
-    std::cout << "  Restore from encrypted ZIP (will prompt for password):" << std::endl;
-    std::cout << "    " << program_name << " -r -z /path/to/backup.zip /path/to/restore" << std::endl;
-    std::cout << std::endl;
-    std::cout << "  Restore from 7Z to folder:" << std::endl;
-    std::cout << "    " << program_name << " -r -7z /path/to/backup.7z /path/to/restore" << std::endl;
 }
 
 bool parse_arguments(int argc, char* argv[], CLIOptions& options) {
@@ -87,6 +99,92 @@ bool parse_arguments(int argc, char* argv[], CLIOptions& options) {
             }
         } else if (arg == "-v" || arg == "--verbose") {
             options.verbose = true;
+        } else if (arg == "--include") {
+            if (i + 1 < argc) {
+                options.include_patterns.emplace_back(argv[++i]);
+            } else {
+                std::cerr << "Error: --include requires a pattern" << std::endl;
+                return false;
+            }
+        } else if (arg == "--exclude") {
+            if (i + 1 < argc) {
+                options.exclude_patterns.emplace_back(argv[++i]);
+            } else {
+                std::cerr << "Error: --exclude requires a pattern" << std::endl;
+                return false;
+            }
+        } else if (arg == "--regex") {
+            options.use_regex = true;
+        } else if (arg == "--include-ext") {
+            if (i + 1 < argc) {
+                options.include_extensions.emplace_back(argv[++i]);
+            } else {
+                std::cerr << "Error: --include-ext requires an extension" << std::endl;
+                return false;
+            }
+        } else if (arg == "--exclude-ext") {
+            if (i + 1 < argc) {
+                options.exclude_extensions.emplace_back(argv[++i]);
+            } else {
+                std::cerr << "Error: --exclude-ext requires an extension" << std::endl;
+                return false;
+            }
+        } else if (arg == "--after") {
+            if (i + 1 < argc) {
+                options.time_after = argv[++i];
+            } else {
+                std::cerr << "Error: --after requires a date" << std::endl;
+                return false;
+            }
+        } else if (arg == "--before") {
+            if (i + 1 < argc) {
+                options.time_before = argv[++i];
+            } else {
+                std::cerr << "Error: --before requires a date" << std::endl;
+                return false;
+            }
+        } else if (arg == "--min-size") {
+            if (i + 1 < argc) {
+                options.min_size = argv[++i];
+            } else {
+                std::cerr << "Error: --min-size requires a size" << std::endl;
+                return false;
+            }
+        } else if (arg == "--max-size") {
+            if (i + 1 < argc) {
+                options.max_size = argv[++i];
+            } else {
+                std::cerr << "Error: --max-size requires a size" << std::endl;
+                return false;
+            }
+        } else if (arg == "--include-user") {
+            if (i + 1 < argc) {
+                options.include_users.emplace_back(argv[++i]);
+            } else {
+                std::cerr << "Error: --include-user requires a username" << std::endl;
+                return false;
+            }
+        } else if (arg == "--exclude-user") {
+            if (i + 1 < argc) {
+                options.exclude_users.emplace_back(argv[++i]);
+            } else {
+                std::cerr << "Error: --exclude-user requires a username" << std::endl;
+                return false;
+            }
+        } else if (arg == "--include-group") {
+            if (i + 1 < argc) {
+                options.include_groups.emplace_back(argv[++i]);
+            } else {
+                std::cerr << "Error: --include-group requires a group name" << std::endl;
+                return false;
+            }
+        } else if (arg == "--exclude-group") {
+            if (i + 1 < argc) {
+                options.exclude_groups.emplace_back(argv[++i]);
+            } else {
+                std::cerr << "Error: --exclude-group requires a group name" << std::endl;
+                return false;
+            }
         } else if (arg[0] != '-') {
             // 这是一个路径参数
             if (options.source_path.empty()) {
@@ -145,6 +243,100 @@ bool prompt_for_password(std::string& password) {
     return !password.empty();
 }
 
+// 解析文件大小字符串 (支持 K, M, G 单位)
+uint64_t parse_size(const std::string& size_str) {
+    if (size_str.empty()) return 0;
+
+    double value = 0;
+    char unit = 0;
+    size_t pos = 0;
+
+    try {
+        value = std::stod(size_str, &pos);
+    } catch (...) {
+        return 0;
+    }
+
+    if (pos < size_str.length()) {
+        unit = std::toupper(size_str[pos]);
+    }
+
+    uint64_t multiplier = 1;
+    switch (unit) {
+        case 'K': multiplier = 1024; break;
+        case 'M': multiplier = 1024 * 1024; break;
+        case 'G': multiplier = 1024ULL * 1024 * 1024; break;
+        case 'T': multiplier = 1024ULL * 1024 * 1024 * 1024; break;
+        default: break;
+    }
+
+    return static_cast<uint64_t>(value * multiplier);
+}
+
+// 解析日期字符串 (YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS)
+std::chrono::system_clock::time_point parse_date(const std::string& date_str) {
+    std::tm tm = {};
+    std::istringstream ss(date_str);
+
+    // 尝试解析 YYYY-MM-DD
+    if (date_str.find(':') == std::string::npos) {
+        ss >> std::get_time(&tm, "%Y-%m-%d");
+    } else {
+        // 尝试解析 YYYY-MM-DD HH:MM:SS
+        ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+    }
+
+    if (ss.fail()) {
+        return std::chrono::system_clock::time_point{};
+    }
+
+    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+}
+
+// 将 CLI 选项转换为 BackupConfig
+BackupConfig build_backup_config(const CLIOptions& options) {
+    BackupConfig config;
+
+    // 路径过滤
+    config.include_patterns = options.include_patterns;
+    config.exclude_patterns = options.exclude_patterns;
+    config.use_regex = options.use_regex;
+
+    // 扩展名过滤
+    config.include_extensions = options.include_extensions;
+    config.exclude_extensions = options.exclude_extensions;
+
+    // 时间过滤
+    if (!options.time_after.empty() || !options.time_before.empty()) {
+        config.filter_by_time = true;
+        if (!options.time_after.empty()) {
+            config.time_after = parse_date(options.time_after);
+        } else {
+            config.time_after = std::chrono::system_clock::time_point::min();
+        }
+        if (!options.time_before.empty()) {
+            config.time_before = parse_date(options.time_before);
+        } else {
+            config.time_before = std::chrono::system_clock::time_point::max();
+        }
+    }
+
+    // 大小过滤
+    if (!options.min_size.empty() || !options.max_size.empty()) {
+        config.filter_by_size = true;
+        config.min_size = parse_size(options.min_size);
+        config.max_size = options.max_size.empty() ? UINT64_MAX : parse_size(options.max_size);
+    }
+
+    // 用户/组过滤
+    config.include_users = options.include_users;
+    config.exclude_users = options.exclude_users;
+    config.include_groups = options.include_groups;
+    config.exclude_groups = options.exclude_groups;
+
+    return config;
+}
+
 int main(int argc, char* argv[]) {
     CLIOptions options;
 
@@ -160,7 +352,12 @@ int main(int argc, char* argv[]) {
     }
 
     try {
-        BackupController controller;
+        // 为备份模式构建配置
+        BackupConfig backup_config;
+        if (options.backup_mode) {
+            backup_config = build_backup_config(options);
+        }
+        BackupController controller(backup_config);
 
         if (options.backup_mode) {
             if (options.verbose) {
@@ -170,6 +367,39 @@ int main(int argc, char* argv[]) {
                 std::cout << "Format: " << (options.use_tar ? "TAR" : options.use_zip ? "ZIP" : "7Z") << std::endl;
                 if (options.use_encryption) {
                     std::cout << "Encryption: Enabled" << std::endl;
+                }
+                // 显示过滤信息
+                if (!options.include_patterns.empty()) {
+                    std::cout << "Include patterns: ";
+                    for (const auto& p : options.include_patterns) std::cout << p << " ";
+                    std::cout << std::endl;
+                }
+                if (!options.exclude_patterns.empty()) {
+                    std::cout << "Exclude patterns: ";
+                    for (const auto& p : options.exclude_patterns) std::cout << p << " ";
+                    std::cout << std::endl;
+                }
+                if (!options.include_extensions.empty()) {
+                    std::cout << "Include extensions: ";
+                    for (const auto& e : options.include_extensions) std::cout << e << " ";
+                    std::cout << std::endl;
+                }
+                if (!options.exclude_extensions.empty()) {
+                    std::cout << "Exclude extensions: ";
+                    for (const auto& e : options.exclude_extensions) std::cout << e << " ";
+                    std::cout << std::endl;
+                }
+                if (!options.time_after.empty()) {
+                    std::cout << "Modified after: " << options.time_after << std::endl;
+                }
+                if (!options.time_before.empty()) {
+                    std::cout << "Modified before: " << options.time_before << std::endl;
+                }
+                if (!options.min_size.empty()) {
+                    std::cout << "Min size: " << options.min_size << std::endl;
+                }
+                if (!options.max_size.empty()) {
+                    std::cout << "Max size: " << options.max_size << std::endl;
                 }
             }
 
@@ -258,10 +488,10 @@ int main(int argc, char* argv[]) {
 
         } else if (options.restore_mode) {
             if (options.verbose) {
-                std::cout << "开始恢复操作..." << std::endl;
-                std::cout << "源路径: " << options.source_path << std::endl;
-                std::cout << "目标路径: " << options.target_path << std::endl;
-                std::cout << "格式: " << (options.use_tar ? "TAR" : options.use_zip ? "ZIP" : "7Z") << std::endl;
+                std::cout << "Restore begin..." << std::endl;
+                std::cout << "source dir: " << options.source_path << std::endl;
+                std::cout << "dest dir: " << options.target_path << std::endl;
+                std::cout << "format: " << (options.use_tar ? "TAR" : options.use_zip ? "ZIP" : "7Z") << std::endl;
             }
 
             // 恢复操作可以覆盖现有文件，不需要检查目标目录是否为空
@@ -272,12 +502,12 @@ int main(int argc, char* argv[]) {
             if (options.use_tar) {
                 TarDevice source_device(options.source_path, TarDevice::Mode::ReadOnly);
                 if (!source_device.is_open()) {
-                    std::cerr << "错误: 无法打开 TAR 文件: " << options.source_path << std::endl;
+                    std::cerr << "Error: fail to open TAR file: " << options.source_path << std::endl;
                     return 1;
                 }
 
                 if (options.verbose) {
-                    std::cout << "正在从 TAR 文件恢复..." << std::endl;
+                    std::cout << "Restore from TAR ..." << std::endl;
                 }
 
                 bool success = controller.run_restore(source_device, target_device);
@@ -285,10 +515,10 @@ int main(int argc, char* argv[]) {
 
                 if (success) {
                     if (options.verbose) {
-                        std::cout << "恢复完成!" << std::endl;
+                        std::cout << "Success!" << std::endl;
                     }
                 } else {
-                    std::cerr << "错误: 恢复操作失败" << std::endl;
+                    std::cerr << "Error: restore failed" << std::endl;
                     return 1;
                 }
             } else if (options.use_zip) {
@@ -296,16 +526,16 @@ int main(int argc, char* argv[]) {
                 std::vector<uint8_t> password_vec;
                 {
                     ZipDevice temp_device(options.source_path, ZipDevice::Mode::ReadOnly);
-                    if (!temp_device.is_open()) {
-                        std::cerr << "错误: 无法打开 ZIP 文件: " << options.source_path << std::endl;
-                        return 1;
-                    }
+                        if (!temp_device.is_open()) {
+                            std::cerr << "Error: Cannot open ZIP file: " << options.source_path << std::endl;
+                            return 1;
+                        }
 
                     // 如果需要密码但没有提供，提示用户输入
                     if (temp_device.is_invalid_password()) {
                         if (options.password.empty()) {
                             if (!prompt_for_password(options.password)) {
-                                std::cerr << "错误: 未提供密码" << std::endl;
+                                std::cerr << "Error: No password provided" << std::endl;
                                 return 1;
                             }
                         }
@@ -316,15 +546,15 @@ int main(int argc, char* argv[]) {
                 ZipDevice source_device(options.source_path, ZipDevice::Mode::ReadOnly, password_vec);
                 if (!source_device.is_open()) {
                     if (source_device.is_invalid_password()) {
-                        std::cerr << "错误: 密码不正确或未提供密码" << std::endl;
+                        std::cerr << "Error: Incorrect password or no password provided" << std::endl;
                     } else {
-                        std::cerr << "错误: 无法打开 ZIP 文件: " << options.source_path << std::endl;
+                        std::cerr << "Error: Cannot open ZIP file: " << options.source_path << std::endl;
                     }
                     return 1;
                 }
 
                 if (options.verbose) {
-                    std::cout << "正在从 ZIP 文件恢复..." << std::endl;
+                    std::cout << "Restoring from ZIP file..." << std::endl;
                 }
 
                 bool success = controller.run_restore(source_device, target_device);
@@ -332,27 +562,25 @@ int main(int argc, char* argv[]) {
 
                 if (success) {
                     if (options.verbose) {
-                        std::cout << "恢复完成!" << std::endl;
+                        std::cout << "Restore completed!" << std::endl;
                     }
                 } else {
-                    std::cerr << "错误: 恢复操作失败" << std::endl;
+                    std::cerr << "Error: Restore operation failed" << std::endl;
                     return 1;
                 }
             } else if (options.use_7z) {
-                // 检查7Z文件是否需要密码
+                // Check if password is provided or needed
                 std::vector<uint8_t> password_vec;
-                {
+                if (!options.password.empty()) {
+                    password_vec.assign(options.password.begin(), options.password.end());
+                } else {
+                    // Try to open without password first
                     SevenZipDevice temp_device(options.source_path, SevenZipDevice::Mode::ReadOnly);
                     if (!temp_device.is_open()) {
-                        std::cerr << "错误: 无法打开 7Z 文件: " << options.source_path << std::endl;
-                        return 1;
-                    }
-                    if (temp_device.is_invalid_password()) {
-                        if (options.password.empty()) {
-                            if (!prompt_for_password(options.password)) {
-                                std::cerr << "错误: 未提供密码" << std::endl;
-                                return 1;
-                            }
+                        // File might need a password, prompt for it
+                        if (!prompt_for_password(options.password)) {
+                            std::cerr << "Error: No password provided" << std::endl;
+                            return 1;
                         }
                         password_vec.assign(options.password.begin(), options.password.end());
                     }
@@ -364,15 +592,15 @@ int main(int argc, char* argv[]) {
                                              password_vec);
                 if (!source_device.is_open()) {
                     if (source_device.is_invalid_password()) {
-                        std::cerr << "错误: 密码不正确或未提供密码" << std::endl;
+                        std::cerr << "Error: Incorrect password or no password provided" << std::endl;
                     } else {
-                        std::cerr << "错误: 无法打开 7Z 文件: " << options.source_path << std::endl;
+                        std::cerr << "Error: Cannot open 7Z file: " << options.source_path << std::endl;
                     }
                     return 1;
                 }
 
                 if (options.verbose) {
-                    std::cout << "正在从 7Z 文件恢复..." << std::endl;
+                    std::cout << "Restoring from 7Z file..." << std::endl;
                 }
 
                 bool success = controller.run_restore(source_device, target_device);
@@ -380,20 +608,20 @@ int main(int argc, char* argv[]) {
 
                 if (success) {
                     if (options.verbose) {
-                        std::cout << "恢复完成!" << std::endl;
+                        std::cout << "Restore completed!" << std::endl;
                     }
                 } else {
-                    std::cerr << "错误: 恢复操作失败" << std::endl;
+                    std::cerr << "Error: Restore operation failed" << std::endl;
                     return 1;
                 }
             }
             }
 
-        std::cout << "操作成功完成!" << std::endl;
+        std::cout << "Operation completed successfully!" << std::endl;
         return 0;
 
     } catch (const std::exception& e) {
-        std::cerr << "异常错误: " << e.what() << std::endl;
+        std::cerr << "Exception: " << e.what() << std::endl;
         return 1;
     }
 }
