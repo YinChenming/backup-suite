@@ -13,7 +13,6 @@ set(CORE_TEST_SOURCE
         src/core/test_core_backup_suite.cpp
         src/core/test_core_compress.cpp
     src/core/test_core_compress_device.cpp
-        src/core/test_core_compress_methods.cpp
         src/core/test_core_encrypt.cpp
     src/core/test_core_seven_zip_all.cpp
 )

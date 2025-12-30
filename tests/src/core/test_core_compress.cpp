@@ -62,7 +62,6 @@ TEST(TestZip, TestOpenZip)
     }
 }
 
-
 // 简单的测试文件实现，用于测试压缩功能
 class TestFile : public ReadableFile {
 public:
@@ -93,7 +92,6 @@ public:
         m_position += bytes_to_read;
         return result;
     }
-
 private:
     std::vector<std::byte> m_content;
     size_t m_position;
@@ -323,14 +321,15 @@ TEST_F(TestSystemDevice, TestCrossCompatibility) {
     bool found = false;
     for (auto& [meta, offset] : results) {
         if (meta.path == libarchive_file_path) {
-            auto stream = tar_reader.get_file_stream(libarchive_file_path);
-            ASSERT_NE(stream, nullptr);
+            print_meta(meta, GTEST_LOG_(INFO) << "test tar-libarchive cross compatibility: find file\n");
+            auto file_stream = tar_reader.get_file_stream(libarchive_file_path);
+            ASSERT_NE(file_stream, nullptr);
 
             std::string content;
             char buffer[1024];
             while (true) {
-                stream->read(buffer, sizeof(buffer));
-                size_t bytes_read = stream->gcount();
+                file_stream->read(buffer, sizeof(buffer));
+                size_t bytes_read = file_stream->gcount();
                 if (bytes_read == 0) {
                     break;
                 }

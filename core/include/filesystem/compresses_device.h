@@ -71,6 +71,14 @@ public:
     bool write_file(ReadableFile& file) override;
     bool write_file_force(ReadableFile& file) override;
     bool write_folder(Folder& folder) override;
+    void set_standard(tar::TarStandard standard)
+    {
+        tar_file_.set_standard(standard);
+    }
+    [[nodiscard]] tar::TarStandard get_standard() const
+    {
+        return tar_file_.get_standard();
+    }
     void close()
     {
         tar_file_.close();

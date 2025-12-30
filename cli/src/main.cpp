@@ -26,6 +26,10 @@ void print_usage(const char* program_name) {
     std::cout << "  -v, --verbose         Verbose output" << std::endl;
     std::cout << "  -h, --help            Show this help information" << std::endl;
     std::cout << std::endl;
+    std::cout << "Format-specific Options:" << std::endl;
+    std::cout << "  --tar-format FORMAT   TAR format: 'pax' or 'gnu' (default: pax)" << std::endl;
+    std::cout << "  --zip-encryption TYPE ZIP encryption: 'zipcrypto' or 'aes' (default: zipcrypto)" << std::endl;
+    std::cout << std::endl;
     std::cout << "Filter Options (Backup mode only):" << std::endl;
     std::cout << "  --include PATTERN     Include files matching pattern (can be used multiple times)" << std::endl;
     std::cout << "  --exclude PATTERN     Exclude files matching pattern (can be used multiple times)" << std::endl;
@@ -44,6 +48,12 @@ void print_usage(const char* program_name) {
     std::cout << "Examples:" << std::endl;
     std::cout << "  Basic backup:" << std::endl;
     std::cout << "    " << program_name << " -z /path/to/source /path/to/backup.zip" << std::endl;
+    std::cout << std::endl;
+    std::cout << "  TAR backup with GNU format:" << std::endl;
+    std::cout << "    " << program_name << " -t --tar-format gnu /path/to/source backup.tar" << std::endl;
+    std::cout << std::endl;
+    std::cout << "  ZIP backup with AES encryption:" << std::endl;
+    std::cout << "    " << program_name << " -z -e -p mypass --zip-encryption aes /src backup.zip" << std::endl;
     std::cout << std::endl;
     std::cout << "  Backup only .cpp and .h files:" << std::endl;
     std::cout << "    " << program_name << " -z --include-ext .cpp --include-ext .h /src backup.zip" << std::endl;
@@ -183,6 +193,32 @@ bool parse_arguments(int argc, char* argv[], CLIOptions& options) {
                 options.exclude_groups.emplace_back(argv[++i]);
             } else {
                 std::cerr << "Error: --exclude-group requires a group name" << std::endl;
+                return false;
+            }
+        } else if (arg == "--tar-format") {
+            if (i + 1 < argc) {
+                std::string format = argv[++i];
+                if (format == "pax" || format == "gnu") {
+                    options.tar_standard = format;
+                } else {
+                    std::cerr << "Error: --tar-format must be 'pax' or 'gnu'" << std::endl;
+                    return false;
+                }
+            } else {
+                std::cerr << "Error: --tar-format requires a format (pax or gnu)" << std::endl;
+                return false;
+            }
+        } else if (arg == "--zip-encryption") {
+            if (i + 1 < argc) {
+                std::string encryption = argv[++i];
+                if (encryption == "zipcrypto" || encryption == "aes") {
+                    options.zip_encryption = encryption;
+                } else {
+                    std::cerr << "Error: --zip-encryption must be 'zipcrypto' or 'aes'" << std::endl;
+                    return false;
+                }
+            } else {
+                std::cerr << "Error: --zip-encryption requires a type (zipcrypto or aes)" << std::endl;
                 return false;
             }
         } else if (arg[0] != '-') {
@@ -420,8 +456,18 @@ int main(int argc, char* argv[]) {
                     return 1;
                 }
 
+                // 设置TAR标准
+                tar::TarStandard tar_std = tar::TarStandard::POSIX_2001_PAX; // 默认PAX
+                if (options.tar_standard == "gnu") {
+                    tar_std = tar::TarStandard::GNU;
+                } else if (options.tar_standard == "pax") {
+                    tar_std = tar::TarStandard::POSIX_2001_PAX;
+                }
+                target_device.set_standard(tar_std);
+
                 if (options.verbose) {
                     std::cout << "Creating TAR backup..." << std::endl;
+                    std::cout << "TAR format: " << options.tar_standard << std::endl;
                 }
 
                 controller.run_backup(source_device, target_device);
@@ -443,9 +489,17 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (options.use_encryption) {
-                    target_device.set_encryption_method(zip::header::ZipEncryptionMethod::ZipCrypto);
+                    // 设置加密方法
+                    zip::header::ZipEncryptionMethod encryption_method = zip::header::ZipEncryptionMethod::ZipCrypto;
+                    if (options.zip_encryption == "aes") {
+                        encryption_method = zip::header::ZipEncryptionMethod::AES256;
+                    } else if (options.zip_encryption == "zipcrypto") {
+                        encryption_method = zip::header::ZipEncryptionMethod::ZipCrypto;
+                    }
+                    target_device.set_encryption_method(encryption_method);
+
                     if (options.verbose) {
-                        std::cout << "Using ZIP Crypto encryption..." << std::endl;
+                        std::cout << "Using " << options.zip_encryption << " encryption..." << std::endl;
                     }
                 }
 

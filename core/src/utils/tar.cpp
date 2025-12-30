@@ -5,9 +5,70 @@
 #include "utils/database_strategies.h"
 
 #include <sstream>
+#include <unordered_map>
+
 #include "utils/crc.h"
 
 using namespace tar;
+
+static std::string key_value_to_pax_field(const std::string& key, const std::string& value)
+{
+    if (value.empty() || key.empty()) return {};
+    std::stringstream ss;
+    ss << " " << key << "=" << value << "\n";
+    const std::string content = ss.str();
+    int len_len = 1;
+    const auto content_size = content.size();
+    size_t base10 = 10;
+    while (len_len + content_size >= base10)
+    {
+        len_len++;
+        base10 *= 10;
+    }
+    return std::to_string(len_len+content_size) + content;
+}
+static std::string time_point_to_pax_string(const std::chrono::system_clock::time_point& tp, const unsigned int nano_width = 9)
+{
+    const auto duration = tp.time_since_epoch();
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
+    const auto nano_seconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration - seconds).count();
+    std::stringstream ss;
+    if (nano_width || !nano_seconds)
+    {
+        ss << seconds.count();
+    } else
+    {
+        ss << seconds.count() << "." << std::setfill('0') << std::setw(nano_width) << nano_seconds;
+    }
+    return ss.str();
+}
+static std::chrono::system_clock::time_point pax_string_to_time_point(const std::string& str)
+{
+    const auto dot_pos = str.find("."), dot_rpos = str.rfind(".");
+    long long seconds = 0, nano_seconds = 0;
+    if (dot_pos == std::string::npos && dot_rpos == std::string::npos)
+    {
+        seconds = std::stoll(str);
+    } else if (dot_pos == dot_rpos)
+    {
+        seconds = std::stoll(str.substr(0, dot_pos));
+        // 精度对齐到小数点后9位
+        auto nano_str = str.substr(dot_pos+1);
+        if (nano_str.length() < 9)
+        {
+            nano_str.append(9 - nano_str.length(), '0');
+        } else if (nano_str.length() > 9)
+        {
+            nano_str = nano_str.substr(0, 9);
+        }
+        nano_seconds = std::stoll(nano_str);
+    }
+    return std::chrono::system_clock::time_point(
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            std::chrono::seconds(seconds) + std::chrono::nanoseconds(nano_seconds)
+        )
+    );
+}
 
 void TarFile::init_db_from_tar()
 {
@@ -32,7 +93,7 @@ void TarFile::init_db_from_tar()
             is_valid_ = false;
             return;
         }
-        if (std::all_of(std::begin(block), std::end(block), [](char c){return !c;}))
+        if (std::all_of(std::begin(block), std::end(block), [](const char c){return !c;}))
         {
             // in POSIX 2001 PAX standard,
             // "At the end of the archive file there shall be two 512-octet logical records filled with binary zeros, interpreted as an end-of-archive indicator."
@@ -70,19 +131,34 @@ void TarFile::init_db_from_tar()
         if (previous_special_block)
         {
             // ReSharper disable once CppDFAUnreachableCode
-            if (!long_name.empty())
+            if (standard_ == TarStandard::GNU)
             {
-                meta.path = long_name;
-            }
-            if (!pax_headers.empty())
-            {
-                if (pax_headers.find("path")!=pax_headers.end())
+                if (!long_name.empty())
                 {
-                    meta.path = pax_headers["path"];
+                    meta.path = long_name;
+                }
+            } else if (standard_ == TarStandard::POSIX_2001_PAX && !pax_headers.empty())
+            {
+                if (const auto path = pax_headers.find("path"); path != pax_headers.end())
+                {
+                    meta.path = path->second;
+                }
+                if (const auto atime = pax_headers.find("atime"); atime != pax_headers.end())
+                {
+                    meta.access_time = pax_string_to_time_point(atime->second);
+                }
+                if (const auto mtime = pax_headers.find("mtime"); mtime != pax_headers.end())
+                {
+                    meta.modification_time = pax_string_to_time_point(mtime->second);
+                }
+                if (const auto link_path = pax_headers.find("linkpath"); link_path != pax_headers.end() && !link_path->second.empty())
+                {
+                    meta.symbolic_link_target = link_path->second;
                 }
             }
             previous_special_block = false;
-        } else
+        }
+        else
         {
             long_name = "";
             pax_headers.clear();
@@ -176,7 +252,6 @@ void TarFile::init_db_from_tar()
             size -= gcount;
         }
     }
-    bool is_good = ifs_->good(), is_eof = ifs_->eof(), is_fail = ifs_->fail(), is_bad = ifs_->bad();
 }
 
 bool TarFile::insert_entity(const FileEntityMeta& meta, const int offset) const
@@ -337,6 +412,7 @@ bool TarFile::add_entity(ReadableFile& file)
     FileEntityMeta& meta = file.get_meta();
     auto full_path = meta.path.generic_u8string();
     bool is_long_path = false;
+    std::unordered_map<std::string, std::string> pax_map;
 
     // Set default standard if not specified
     if (standard_ == TarStandard::UNKNOWN)
@@ -393,7 +469,104 @@ bool TarFile::add_entity(ReadableFile& file)
             base10 *= 10;
         }
         std::string pax_header = std::to_string(pax_len_len+pax_content_size) + pax_content;
+        pax_map["path"] = full_path;
 
+        // Create PAX header entry
+        TarFileHeader pax_header_entry{};
+        // The name field is set to "PaxHeader/@PaxHeader" for PAX extended header entries
+        memset(reinterpret_cast<char*>(&pax_header_entry), 0, sizeof(pax_header_entry));
+        strncpy_s(pax_header_entry.name, "PaxHeader/@PaxHeader", sizeof(pax_header_entry.name));
+        snprintf(pax_header_entry.size, sizeof(pax_header_entry.size), "%011o", static_cast<unsigned int>(pax_header.size()));
+        pax_header_entry.type_flag = 'x'; // PAX extended header marker
+        // USTAR magic and version
+        strncpy_s(pax_header_entry.ustar.magic, "ustar", sizeof(pax_header_entry.ustar.magic));
+        pax_header_entry.ustar.version[0] = pax_header_entry.ustar.version[1] = '0';
+        memset(pax_header_entry.checksum, ' ', sizeof(pax_header_entry.checksum));
+
+        // Calculate checksum
+        unsigned int checksum = 0;
+        const auto bytes = reinterpret_cast<const unsigned char*>(&pax_header_entry);
+        for (size_t i = 0; i < sizeof(TarFileHeader); ++i)
+        {
+            checksum += bytes[i];
+        }
+        snprintf(pax_header_entry.checksum, sizeof(pax_header_entry.checksum), "%06o", checksum);
+        pax_header_entry.checksum[6] = '\0';
+        pax_header_entry.checksum[7] = ' ';
+
+        // Write PAX header block
+        // ofs_->write(reinterpret_cast<const char*>(&pax_header_entry), sizeof(pax_header_entry));
+
+        // Write PAX header content
+        size_t padding = ((pax_header.size() / TarBlockSize) + static_cast<bool>(pax_header.size() % TarBlockSize)) * TarBlockSize;
+        std::vector<char> pax_block(padding, 0);
+        memcpy(pax_block.data(), pax_header.c_str(), pax_header.size());
+        // ofs_->write(pax_block.data(), pax_block.size());
+
+        is_long_path = true;
+    } else if (standard_ == TarStandard::POSIX_1988_USTAR && full_path.size() >= 256)
+    {
+        full_path = full_path.substr(0, 255); // Truncate to fit USTAR limits
+        printf("WARNING! File path too long for USTAR format, truncated to: %s\n", full_path.c_str());
+
+        // Use default behavior
+        is_long_path = false;
+    }
+
+    // 更新PAX扩展字段
+    if (standard_ == TarStandard::POSIX_2001_PAX)
+    {
+        if (meta.access_time != meta.creation_time)
+        {
+            pax_map["atime"] = time_point_to_pax_string(meta.access_time);
+        }
+        if (meta.modification_time != meta.creation_time)
+        {
+            pax_map["mtime"] = time_point_to_pax_string(meta.modification_time);
+        }
+        if (const auto link_path = meta.symbolic_link_target.generic_u8string(); link_path.length() >= 100)
+        {
+            pax_map["linkpath"] = link_path;
+        }
+        if (!meta.user_name.empty())
+        {
+            pax_map["uname"] = meta.user_name;
+        }
+        if (!meta.group_name.empty())
+        {
+            pax_map["gname"] = meta.group_name;
+        }
+    }
+
+    // generate a shortcut for long path and replace it (long path SHOULD be handled above)
+    if (is_long_path)
+    {
+        // shortcut is like '@PathCut/_pc_crc32/01234567(CRC32)/filename'
+        // shortcut without filename will take 29 bytes(@PathCut/_pc_crc32/01234567/\0)
+        const auto crc32 = crc::crc32(reinterpret_cast<const char*>(full_path.c_str()), full_path.size());
+        std::stringstream new_path_ss;
+        new_path_ss << "@PathCut/_pc_crc32/";
+        new_path_ss << std::uppercase << std::setw(8) << std::setfill('0') << std::hex << crc32 << "/";
+        if (auto filename = std::filesystem::path(full_path).filename().generic_u8string();
+            filename.size() >= 100 - 29)
+        {
+            new_path_ss << filename.substr(filename.size() - (100 - 29 - 1)); // -1 for null terminator
+        } else
+        {
+            new_path_ss << filename;
+        }
+        meta.path = new_path_ss.str();
+    }
+
+    // 写入PAX扩展字段
+    if (standard_ == TarStandard::POSIX_2001_PAX && !pax_map.empty())
+    {
+        std::stringstream ss;
+        for (const auto&[key, value]: pax_map)
+        {
+            ss << key_value_to_pax_field(key, value);
+        }
+        const std::string pax_header = ss.str();
         // Create PAX header entry
         TarFileHeader pax_header_entry{};
         // The name field is set to "PaxHeader/@PaxHeader" for PAX extended header entries
@@ -425,35 +598,6 @@ bool TarFile::add_entity(ReadableFile& file)
         std::vector<char> pax_block(padding, 0);
         memcpy(pax_block.data(), pax_header.c_str(), pax_header.size());
         ofs_->write(pax_block.data(), pax_block.size());
-
-        is_long_path = true;
-    } else if (standard_ == TarStandard::POSIX_1988_USTAR && full_path.size() >= 256)
-    {
-        full_path = full_path.substr(0, 255); // Truncate to fit USTAR limits
-        printf("WARNING! File path too long for USTAR format, truncated to: %s\n", full_path.c_str());
-
-        // Use default behavior
-        is_long_path = false;
-    }
-
-    // generate a shortcut for long path and replace it (long path SHOULD be handled above)
-    if (is_long_path)
-    {
-        // shortcut is like '@PathCut/_pc_crc32/01234567(CRC32)/filename'
-        // shortcut without filename will take 29 bytes(@PathCut/_pc_crc32/01234567/\0)
-        const auto crc32 = crc::crc32(reinterpret_cast<const char*>(full_path.c_str()), full_path.size());
-        std::stringstream new_path_ss;
-        new_path_ss << "@PathCut/_pc_crc32/";
-        new_path_ss << std::uppercase << std::setw(8) << std::setfill('0') << std::hex << crc32 << "/";
-        if (auto filename = std::filesystem::path(full_path).filename().generic_u8string();
-            filename.size() >= 100 - 29)
-        {
-            new_path_ss << filename.substr(filename.size() - (100 - 29 - 1)); // -1 for null terminator
-        } else
-        {
-            new_path_ss << filename;
-        }
-        meta.path = new_path_ss.str();
     }
 
     // Get the current offset for the entry
@@ -514,15 +658,18 @@ void TarFile::close()
         return;
     }
 
-    // Write two empty blocks to mark the end of archive
-    TarBlock empty_block{};
-    memset(empty_block.block, 0, sizeof(empty_block.block));
+    // Write two empty blocks to mark the end of archive (in PAX extension)
+    if (standard_ == TarStandard::POSIX_2001_PAX)
+    {
+        TarBlock empty_block{};
+        memset(empty_block.block, 0, sizeof(empty_block.block));
 
-    // Write first empty block
-    ofs_->write(empty_block.block, sizeof(empty_block.block));
+        // Write first empty block
+        ofs_->write(empty_block.block, sizeof(empty_block.block));
 
-    // Write second empty block
-    ofs_->write(empty_block.block, sizeof(empty_block.block));
+        // Write second empty block
+        ofs_->write(empty_block.block, sizeof(empty_block.block));
+    }
 
     // Close the output file stream
     ofs_->close();
@@ -545,6 +692,14 @@ TarFileHeader TarFile::file_meta2tar_header(const FileEntityMeta &meta, const Ta
     else
     {
         strncpy_s(header.name, reinterpret_cast<const char*>(full_path.c_str()), sizeof(header.name));
+    }
+    if (auto link_path = meta.symbolic_link_target.generic_u8string(); !meta.symbolic_link_target.empty())
+    {
+        if (link_path.length() > 100)
+        {
+            link_path = link_path.substr(0, 100);
+        }
+        strncpy_s(header.link_name, link_path.c_str(), sizeof(header.link_name));
     }
 
     // Set all metadata fields
