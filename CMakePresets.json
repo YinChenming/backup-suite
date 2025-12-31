@@ -14,7 +14,8 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
         "VCPKG_APPLOCAL_DEPS": "ON",
-        "LLVM_ENABLE_RUNTIMES": "compiler-rt"
+        "LLVM_ENABLE_RUNTIMES": "compiler-rt",
+        "CMAKE_PREFIX_PATH": "D:\\Developer\\Qt\\6.9.2\\msvc2022_64\\lib\\cmake"
       },
       "environment": {
         "VCPKG_TARGET_TRIPLET": "x64-windows-dynamic"
@@ -36,7 +37,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_APPLOCAL_DEPS": "ON"
+        "VCPKG_APPLOCAL_DEPS": "ON",
+        "CMAKE_PREFIX_PATH": "D:\\Developer\\Qt\\6.9.2\\msvc2022_64\\lib\\cmake"
       },
       "environment": {
         "VCPKG_TARGET_TRIPLET": "x64-windows-dynamic"
@@ -58,7 +60,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_APPLOCAL_DEPS": "ON"
+        "VCPKG_APPLOCAL_DEPS": "ON",
+        "CMAKE_PREFIX_PATH": "D:\\Developer\\Qt\\6.9.2\\mingw_64\\lib\\cmake"
       },
       "environment": {
         "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic"
@@ -76,7 +79,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_APPLOCAL_DEPS": "ON"
+        "VCPKG_APPLOCAL_DEPS": "ON",
+        "CMAKE_PREFIX_PATH": "D:\\Developer\\Qt\\6.9.2\\mingw_64\\lib\\cmake"
       },
       "environment": {
         "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic"

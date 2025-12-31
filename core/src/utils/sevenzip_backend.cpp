@@ -1,5 +1,6 @@
 #include "utils/sevenzip_backend.h"
 
+#include <memory>
 #include <unordered_map>
 #include <utility>
 #include <string>
@@ -22,13 +23,13 @@
 #include <archive_entry.h>
 
 namespace {
-    static bool file_exists(const std::filesystem::path& p)
+    bool file_exists(const std::filesystem::path& p)
     {
         try { return std::filesystem::exists(p) && std::filesystem::is_regular_file(p); }
         catch (...) { return false; }
     }
 
-    static std::string find_7z_cli()
+    std::string find_7z_cli()
     {
 #ifdef _WIN32
         const std::vector<std::filesystem::path> default_candidates = {
@@ -39,7 +40,7 @@ namespace {
         const char* env_cli = std::getenv("SEVENZIP_CLI");
         if (env_cli && *env_cli)
         {
-            std::filesystem::path p(env_cli);
+            const std::filesystem::path p(env_cli);
             if (file_exists(p)) return p.string();
         }
         const char* path_env = std::getenv("PATH");
@@ -101,7 +102,7 @@ namespace {
 #endif
     }
 
-    static std::filesystem::path normalize_rel(const std::filesystem::path& p)
+    std::filesystem::path normalize_rel(const std::filesystem::path& p)
     {
         std::string s = p.generic_u8string();
         if (s.empty()) return {};
@@ -112,7 +113,7 @@ namespace {
             if (s[0] == '/') { s = s.substr(1); continue; }
             break;
         }
-        return std::filesystem::path(s);
+        return {s};
     }
     class MemoryReadableFile : public ReadableFile {
         std::shared_ptr<std::vector<std::byte>> data_{};
@@ -143,7 +144,7 @@ static std::unordered_map<std::filesystem::path, std::shared_ptr<std::vector<std
 static std::unordered_map<std::filesystem::path, FileEntityMeta> s_memMeta;
 
 namespace {
-    static FileEntityType filetype_from_archive_entry(unsigned int type)
+    FileEntityType filetype_from_archive_entry(unsigned int type)
     {
         switch (type)
         {
@@ -154,7 +155,7 @@ namespace {
         }
     }
 
-    static void set_times_from_entry(FileEntityMeta& meta, archive_entry* e)
+    void set_times_from_entry(FileEntityMeta& meta, archive_entry* e)
     {
         // Map archive times to chrono fields if present
         if (archive_entry_mtime_is_set(e))
@@ -165,15 +166,15 @@ namespace {
             meta.creation_time = std::chrono::system_clock::from_time_t(archive_entry_ctime(e));
     }
 
-    static std::string to_string_password(const std::vector<uint8_t>& pw)
+    std::string to_string_password(const std::vector<uint8_t>& pw)
     {
-        return std::string(reinterpret_cast<const char*>(pw.data()), pw.size());
+        return {reinterpret_cast<const char*>(pw.data()), pw.size()};
     }
 }
 
 bool P7zipBackend::open(const std::filesystem::path& archive, ISevenZipBackend::Mode mode)
 {
-    archive_ = archive;
+    archive_ = std::filesystem::absolute(archive);
     mode_ = mode;
     invalid_password_ = false;
     disk_index_built_ = false;
@@ -598,7 +599,7 @@ static std::shared_ptr<std::vector<std::byte>> to_bytes(ReadableFile& file)
 {
     auto all = file.read();
     if (!all) return {};
-    return std::shared_ptr<std::vector<std::byte>>(new std::vector<std::byte>(std::move(*all)));
+    return std::make_shared<std::vector<std::byte>>(std::move(*all));
 }
 
 bool P7zipBackend::add_file(ReadableFile& file)

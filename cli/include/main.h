@@ -27,7 +27,7 @@ struct CLIOptions {
 
     // 格式特定选项
     std::string tar_standard = "pax";     // "gnu" 或 "pax"，默认 pax
-    std::string zip_encryption = "zipcrypto"; // "zipcrypto" 或 "aes"，默认 zipcrypto
+    std::string zip_encryption = "zipcrypto"; // "zipcrypto" 或 "rc4"，默认 zipcrypto
 
     // 过滤选项
     std::vector<std::string> include_patterns;

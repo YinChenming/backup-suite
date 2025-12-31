@@ -68,7 +68,7 @@ void print_usage(const char* program_name) {
     std::cout << "    " << program_name << " -r -z /path/to/backup.zip /path/to/restore" << std::endl;
 }
 
-bool parse_arguments(int argc, char* argv[], CLIOptions& options) {
+bool parse_arguments(const int argc, char* argv[], CLIOptions& options) {
     // 默认是备份模式
     options.backup_mode = true;
 
@@ -211,7 +211,7 @@ bool parse_arguments(int argc, char* argv[], CLIOptions& options) {
         } else if (arg == "--zip-encryption") {
             if (i + 1 < argc) {
                 std::string encryption = argv[++i];
-                if (encryption == "zipcrypto" || encryption == "aes") {
+                if (encryption == "zipcrypto" || encryption == "rc4") {
                     options.zip_encryption = encryption;
                 } else {
                     std::cerr << "Error: --zip-encryption must be 'zipcrypto' or 'aes'" << std::endl;
@@ -491,8 +491,8 @@ int main(int argc, char* argv[]) {
                 if (options.use_encryption) {
                     // 设置加密方法
                     zip::header::ZipEncryptionMethod encryption_method = zip::header::ZipEncryptionMethod::ZipCrypto;
-                    if (options.zip_encryption == "aes") {
-                        encryption_method = zip::header::ZipEncryptionMethod::AES256;
+                    if (options.zip_encryption == "rc4") {
+                        encryption_method = zip::header::ZipEncryptionMethod::RC4;
                     } else if (options.zip_encryption == "zipcrypto") {
                         encryption_method = zip::header::ZipEncryptionMethod::ZipCrypto;
                     }

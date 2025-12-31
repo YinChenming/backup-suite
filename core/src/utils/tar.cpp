@@ -44,7 +44,7 @@ static std::string time_point_to_pax_string(const std::chrono::system_clock::tim
 }
 static std::chrono::system_clock::time_point pax_string_to_time_point(const std::string& str)
 {
-    const auto dot_pos = str.find("."), dot_rpos = str.rfind(".");
+    const auto dot_pos = str.find('.'), dot_rpos = str.rfind('.');
     long long seconds = 0, nano_seconds = 0;
     if (dot_pos == std::string::npos && dot_rpos == std::string::npos)
     {
@@ -390,9 +390,6 @@ std::unique_ptr<TarFile::TarIstream> TarFile::get_file_stream(const std::filesys
         const auto entity = db_.query_one<db::TarInitializationStrategy::SQLEntity>(std::move(stmt));
         auto [meta, offset] = sql_entity2file_meta(entity);
         char block[512];
-        const bool is_eof = ifs_->eof(), is_open = ifs_->is_open(), is_bad = ifs_->bad(), is_fail = ifs_->fail();
-        ifs_->seekg(0, std::ios::end);
-        const auto file_size = ifs_->tellg();
         ifs_->seekg(offset, std::ios::beg);
         ifs_->read(block, sizeof(TarFileHeader));
         tar = std::make_unique<TarIstream>(*ifs_.get(), offset, meta);
@@ -822,4 +819,13 @@ std::vector<std::pair<FileEntityMeta, int>> TarFile::list_dir(const std::filesys
         results.emplace_back(meta, offset);
     }
     return results;
+}
+
+TarFile::~TarFile()
+{
+    try {
+        close();
+    } catch (...) {
+        // Suppress exceptions during destruction
+    }
 }

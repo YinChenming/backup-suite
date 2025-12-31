@@ -133,6 +133,8 @@ namespace tar
                     is_valid_ = false;
             }
         }
+        // Ensure output tar is properly finalized when TarFile is destroyed
+        ~TarFile();
         [[nodiscard]] std::unique_ptr<TarIstream> get_file_stream(const std::filesystem::path& path) const;
         [[nodiscard]] std::vector<std::pair<FileEntityMeta, int>> list_dir(const std::filesystem::path& path) const;
         void set_standard(const TarStandard standard){standard_ = standard;}

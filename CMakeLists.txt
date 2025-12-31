@@ -34,6 +34,18 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
 
+# Define per-component runtime directories under ${CMAKE_BINARY_DIR}/bin
+set(BIN_ROOT "${CMAKE_BINARY_DIR}/bin")
+set(BIN_CLI_DIR "${BIN_ROOT}/cli")
+set(BIN_GUI_DIR "${BIN_ROOT}/gui")
+set(BIN_TESTS_DIR "${BIN_ROOT}/tests")
+
+# Ensure directories exist at configure time for IDEs that show them
+file(MAKE_DIRECTORY ${BIN_ROOT})
+file(MAKE_DIRECTORY ${BIN_CLI_DIR})
+file(MAKE_DIRECTORY ${BIN_GUI_DIR})
+file(MAKE_DIRECTORY ${BIN_TESTS_DIR})
+
 add_subdirectory(core)
 add_subdirectory(cli)
 add_subdirectory(gui)

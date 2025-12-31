@@ -206,3 +206,4 @@ __latexindent_temp.tex
 *.tar
 *.7z
 bin/
+third_party/
