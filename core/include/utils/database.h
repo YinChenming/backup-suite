@@ -50,7 +50,7 @@ namespace db
             }
             else
             {
-                static_assert(0, "unsupported size of type for get_column_value");
+                static_assert(false, "unsupported size of type for get_column_value");
             }
         } else if constexpr (std::is_floating_point_v<T>) {
             return static_cast<T>(sqlite3_column_double(stmt, col));
@@ -65,13 +65,13 @@ namespace db
             int bytes = sqlite3_column_bytes(stmt, col);
 
             if (blob_ptr && bytes > 0) {
-                const ElementType* start = static_cast<const ElementType*>(blob_ptr);
+                const auto* start = static_cast<const ElementType*>(blob_ptr);
                 return T(start, start + bytes);
             }
             return T{};
         } else
         {
-            static_assert(0, "unsupported type for get_column_value");
+            static_assert(false, "unsupported type for get_column_value");
         }
         return T{};
     }
@@ -249,7 +249,7 @@ namespace db
         Database& operator=(const Database&) = delete;
         virtual ~Database()
         {
-            db_handle_.release();
+            db_handle_.reset();
             if (!db_path_.empty() && db_path_ != ":memory:")
             {
                 if (std::filesystem::exists(db_path_))
@@ -262,8 +262,8 @@ namespace db
         }
         [[nodiscard]] bool is_open() const { return db_handle_ != nullptr; }
         [[nodiscard]] bool is_initialized() const;
-        [[nodiscard]] bool exec(const std::string& sql, const bool commit = false) const;
-        [[nodiscard]] bool execute(const sqlite3_stmt& stmt, const bool commit = false) const;
+        [[nodiscard]] bool exec(const std::string& sql, bool commit = false) const;
+        [[nodiscard]] bool execute(const sqlite3_stmt& stmt, bool commit = false) const;
         template<typename T>
         ResultSet<T> query(const std::string& sql) const
         {

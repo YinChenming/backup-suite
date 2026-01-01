@@ -11,7 +11,7 @@
 
 using namespace tar;
 
-static std::string key_value_to_pax_field(const std::string& key, const std::string& value)
+static std::string key_value2pax_field(const std::string& key, const std::string& value)
 {
     if (value.empty() || key.empty()) return {};
     std::stringstream ss;
@@ -27,7 +27,7 @@ static std::string key_value_to_pax_field(const std::string& key, const std::str
     }
     return std::to_string(len_len+content_size) + content;
 }
-static std::string time_point_to_pax_string(const std::chrono::system_clock::time_point& tp, const unsigned int nano_width = 9)
+static std::string time_point2pax_string(const std::chrono::system_clock::time_point& tp, const unsigned int nano_width = 9)
 {
     const auto duration = tp.time_since_epoch();
     const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration);
@@ -42,7 +42,7 @@ static std::string time_point_to_pax_string(const std::chrono::system_clock::tim
     }
     return ss.str();
 }
-static std::chrono::system_clock::time_point pax_string_to_time_point(const std::string& str)
+static std::chrono::system_clock::time_point pax_string2time_point(const std::string& str)
 {
     const auto dot_pos = str.find('.'), dot_rpos = str.rfind('.');
     long long seconds = 0, nano_seconds = 0;
@@ -145,11 +145,11 @@ void TarFile::init_db_from_tar()
                 }
                 if (const auto atime = pax_headers.find("atime"); atime != pax_headers.end())
                 {
-                    meta.access_time = pax_string_to_time_point(atime->second);
+                    meta.access_time = pax_string2time_point(atime->second);
                 }
                 if (const auto mtime = pax_headers.find("mtime"); mtime != pax_headers.end())
                 {
-                    meta.modification_time = pax_string_to_time_point(mtime->second);
+                    meta.modification_time = pax_string2time_point(mtime->second);
                 }
                 if (const auto link_path = pax_headers.find("linkpath"); link_path != pax_headers.end() && !link_path->second.empty())
                 {
@@ -515,11 +515,11 @@ bool TarFile::add_entity(ReadableFile& file)
     {
         if (meta.access_time != meta.creation_time)
         {
-            pax_map["atime"] = time_point_to_pax_string(meta.access_time);
+            pax_map["atime"] = time_point2pax_string(meta.access_time);
         }
         if (meta.modification_time != meta.creation_time)
         {
-            pax_map["mtime"] = time_point_to_pax_string(meta.modification_time);
+            pax_map["mtime"] = time_point2pax_string(meta.modification_time);
         }
         if (const auto link_path = meta.symbolic_link_target.generic_u8string(); link_path.length() >= 100)
         {
@@ -561,7 +561,7 @@ bool TarFile::add_entity(ReadableFile& file)
         std::stringstream ss;
         for (const auto&[key, value]: pax_map)
         {
-            ss << key_value_to_pax_field(key, value);
+            ss << key_value2pax_field(key, value);
         }
         const std::string pax_header = ss.str();
         // Create PAX header entry

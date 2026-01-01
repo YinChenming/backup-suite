@@ -24,7 +24,7 @@ namespace crc
     public:
         CRC32() = default;
         void update(uint8_t data);
-        uint32_t finalize() const;
+        [[nodiscard]] uint32_t finalize() const;
         template<typename T>
         std::enable_if_t<(std::is_integral_v<T> && sizeof(T)==1) || std::is_same_v<T, std::byte>> update(const T* data, const size_t length)
         {

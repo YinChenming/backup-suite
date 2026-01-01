@@ -70,7 +70,6 @@ std::unique_ptr<ReadableFile> WindowsDevice::get_file(const std::filesystem::pat
     return std::make_unique<PhysicalDeviceReadableFile>(*std::move(meta), std::move(fs));
 }
 
-
 std::unique_ptr<std::ifstream> WindowsDevice::get_file_stream(const std::filesystem::path& path) const
 {
     return std::filesystem::exists(root / path) && std::filesystem::is_regular_file(root / path) ?

@@ -48,8 +48,8 @@ public:
     virtual ~ISevenZipBackend() = default;
     virtual bool open(const std::filesystem::path& archive, Mode mode) = 0;
     virtual void close() = 0;
-    virtual bool is_open() const = 0;
-    virtual bool is_invalid_password() const = 0;
+    [[nodiscard]] virtual bool is_open() const = 0;
+    [[nodiscard]] virtual bool is_invalid_password() const = 0;
 
     virtual void set_password(const std::vector<uint8_t>& password) = 0;
     virtual void set_compression(sevenzip::CompressionMethod) = 0;
@@ -82,8 +82,8 @@ class BACKUP_SUITE_API P7zipBackend : public ISevenZipBackend
 public:
     bool open(const std::filesystem::path& archive, Mode mode) override;
     void close() override;
-    bool is_open() const override;
-    bool is_invalid_password() const override;
+    [[nodiscard]] bool is_open() const override;
+    [[nodiscard]] bool is_invalid_password() const override;
     void set_password(const std::vector<uint8_t>& password) override;
     void set_compression(sevenzip::CompressionMethod) override;
     void set_encryption(sevenzip::EncryptionMethod) override;

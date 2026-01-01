@@ -32,7 +32,7 @@ public:
     ~PhysicalDeviceReadableFile() override{
         this->PhysicalDeviceReadableFile::close();
     };
-    std::ifstream &get_stream() { return *stream; }
+    [[nodiscard]] std::ifstream &get_stream() const { return *stream; }
     [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read() override;
     [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read(size_t size) override;
     void close() override

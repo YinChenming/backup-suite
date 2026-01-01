@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <utility>
 
 #include "api.h"
 
@@ -18,7 +19,7 @@ namespace tmpfile_utils
     class BACKUP_SUITE_API TmpFile
     {
     public:
-        explicit TmpFile(const std::filesystem::path& path) : path_(path) {}
+        explicit TmpFile(std::filesystem::path  path) : path_(std::move(path)) {}
 
         // RAII：析构时自动删除文件
         ~TmpFile() {
@@ -34,7 +35,7 @@ namespace tmpfile_utils
         TmpFile& operator=(const TmpFile&) = delete;
         TmpFile(TmpFile&& other) noexcept : path_(std::move(other.path_)) { other.path_.clear(); }
 
-        const auto& path() const { return path_; }
+        [[nodiscard]] const auto& path() const { return path_; }
         static std::unique_ptr<TmpFile> create();
     private:
         std::filesystem::path path_;

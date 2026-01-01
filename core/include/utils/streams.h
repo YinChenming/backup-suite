@@ -82,7 +82,6 @@ public:
     }
 };
 
-
 class BACKUP_SUITE_API obstream
 {
     std::ostream& os_;

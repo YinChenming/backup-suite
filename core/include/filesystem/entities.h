@@ -32,17 +32,14 @@ constexpr FileEntityType operator|(FileEntityType a, FileEntityType b) {
     using T = std::underlying_type_t<FileEntityType>;
     return static_cast<FileEntityType>(static_cast<T>(a) | static_cast<T>(b));
 }
-
 constexpr FileEntityType operator&(FileEntityType a, FileEntityType b) {
     using T = std::underlying_type_t<FileEntityType>;
     return static_cast<FileEntityType>(static_cast<T>(a) & static_cast<T>(b));
 }
-
 constexpr FileEntityType operator^(FileEntityType a, FileEntityType b) {
     using T = std::underlying_type_t<FileEntityType>;
     return static_cast<FileEntityType>(static_cast<T>(a) ^ static_cast<T>(b));
 }
-
 constexpr FileEntityType operator~(FileEntityType a) {
     using T = std::underlying_type_t<FileEntityType>;
     return static_cast<FileEntityType>(~static_cast<T>(a));
