@@ -26,7 +26,7 @@ static fs::path get_temp_path()
             fs::create_directory(tmpfile_path);
         }
         return tmpfile_path;
-    } catch (const std::exception& e)
+    } catch ([[maybe_unused]] const std::exception& e)
     {
     }
     // 尝试从环境变量中获取路径
@@ -99,7 +99,7 @@ static fs::path gen_tmpfile_path()
 
         std::stringstream ss;
         ss << "ycm";
-        for (int i = 0; i < 8; ++i) {
+        for (int j = 0; j < 8; ++j) {
             ss << charset[gen() % (sizeof(charset) - 1)];
         }
         ss << ".tmp";

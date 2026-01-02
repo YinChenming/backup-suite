@@ -11,7 +11,6 @@
 #include "device.h"
 #include "utils/tar.h"
 #include "utils/zip.h"
-#include "utils/tmpfile.h"
 #include "filesystem/entities.h"
 
 template<typename T>

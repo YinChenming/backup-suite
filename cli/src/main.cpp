@@ -12,6 +12,11 @@
 #include <iomanip>
 #include <sstream>
 
+#include "filesystem/system_device.h"
+#include "backup/backup_controller.h"
+#include "filesystem/compresses_device.h"
+#include "filesystem/seven_zip_device.h"
+
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [options] <source_path> <target_path>" << std::endl;
     std::cout << std::endl;
@@ -66,8 +71,13 @@ void print_usage(const char* program_name) {
     std::cout << std::endl;
     std::cout << "  Restore:" << std::endl;
     std::cout << "    " << program_name << " -r -z /path/to/backup.zip /path/to/restore" << std::endl;
-}
 
+    // Warn if 7z CLI is missing
+    if (!P7zipBackend::ensure_sevenz_cli()) {
+        std::cout << std::endl;
+        std::cout << "Warning: 7z.exe/7za.exe not found; 7z-related functions are unavailable until it is installed or placed next to the executable." << std::endl;
+    }
+}
 bool parse_arguments(const int argc, char* argv[], CLIOptions& options) {
     // 默认是备份模式
     options.backup_mode = true;
@@ -236,49 +246,54 @@ bool parse_arguments(const int argc, char* argv[], CLIOptions& options) {
             return false;
         }
     }
-
     return true;
 }
-
 bool validate_options(const CLIOptions& options) {
     // Check path parameters
     if (options.source_path.empty() || options.target_path.empty()) {
         std::cerr << "Error: Source path and target path are required" << std::endl;
         return false;
     }
-
     // Check mode
     if (!options.backup_mode && !options.restore_mode) {
         std::cerr << "Error: Must specify backup mode (-b) or restore mode (-r)" << std::endl;
         return false;
     }
-
     // Check compression format
     if (!options.use_tar && !options.use_zip && !options.use_7z) {
         std::cerr << "Error: Must specify compression format (-t or -z or -7z)" << std::endl;
         return false;
     }
-
     // Check encryption options
     if (options.use_encryption && !(options.use_zip || options.use_7z)) {
         std::cerr << "Error: Encryption option (-e) can only be used with ZIP or 7Z format" << std::endl;
         return false;
     }
-
     if (options.use_encryption && options.password.empty()) {
         std::cerr << "Error: Must specify password (-p) when using encryption option (-e)" << std::endl;
         return false;
     }
-
+    if (options.backup_mode) {
+        try {
+            const auto src = std::filesystem::weakly_canonical(options.source_path);
+            const auto dst = std::filesystem::weakly_canonical(options.target_path);
+            std::error_code ec;
+            if (const auto rel = std::filesystem::relative(dst, src, ec);
+                !ec && !rel.empty() && rel.native().front() != L'.') {
+                std::cerr << "Error: target archive resides inside source directory; choose a different output location." << std::endl;
+                return false;
+            }
+        } catch (const std::exception&) {
+            // best effort: if canonical fails, skip this check
+        }
+    }
     return true;
 }
-
 bool prompt_for_password(std::string& password) {
     std::cout << "Enter password (ZIP/7Z): ";
     std::getline(std::cin, password);
     return !password.empty();
 }
-
 // 解析文件大小字符串 (支持 K, M, G 单位)
 uint64_t parse_size(const std::string& size_str) {
     if (size_str.empty()) return 0;
@@ -292,11 +307,9 @@ uint64_t parse_size(const std::string& size_str) {
     } catch (...) {
         return 0;
     }
-
     if (pos < size_str.length()) {
-        unit = std::toupper(size_str[pos]);
+        unit = static_cast<char>(std::toupper(size_str[pos]));
     }
-
     uint64_t multiplier = 1;
     switch (unit) {
         case 'K': multiplier = 1024; break;
@@ -305,10 +318,8 @@ uint64_t parse_size(const std::string& size_str) {
         case 'T': multiplier = 1024ULL * 1024 * 1024 * 1024; break;
         default: break;
     }
-
-    return static_cast<uint64_t>(value * multiplier);
+    return static_cast<uint64_t>(multiplier * value); // NOLINT(*-narrowing-conversions)
 }
-
 // 解析日期字符串 (YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS)
 std::chrono::system_clock::time_point parse_date(const std::string& date_str) {
     std::tm tm = {};
@@ -321,14 +332,11 @@ std::chrono::system_clock::time_point parse_date(const std::string& date_str) {
         // 尝试解析 YYYY-MM-DD HH:MM:SS
         ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
     }
-
     if (ss.fail()) {
         return std::chrono::system_clock::time_point{};
     }
-
     return std::chrono::system_clock::from_time_t(std::mktime(&tm));
 }
-
 // 将 CLI 选项转换为 BackupConfig
 BackupConfig build_backup_config(const CLIOptions& options) {
     BackupConfig config;
@@ -548,7 +556,15 @@ int main(int argc, char* argv[]) {
                 std::cout << "format: " << (options.use_tar ? "TAR" : options.use_zip ? "ZIP" : "7Z") << std::endl;
             }
 
-            // 恢复操作可以覆盖现有文件，不需要检查目标目录是否为空
+            if (!std::filesystem::exists(options.target_path)) {
+                std::cout << "Warning: target restore directory does not exist; creating: " << options.target_path << std::endl;
+                std::error_code ec;
+                std::filesystem::create_directories(options.target_path, ec);
+                if (ec) {
+                    std::cerr << "Error: failed to create target directory: " << options.target_path << " : " << ec.message() << std::endl;
+                    return 1;
+                }
+            }
 
             // 创建目标设备
             SystemDevice target_device(options.target_path);

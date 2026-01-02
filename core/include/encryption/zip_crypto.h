@@ -51,9 +51,9 @@ namespace encryption
         // 初始化 Key
         void init(const std::vector<uint8_t>& password);
         // 解密一个字节
-        uint8_t decrypt(const uint8_t cipher_byte);
+        uint8_t decrypt(uint8_t cipher_byte);
         // 加密一个字节
-        uint8_t encrypt(const uint8_t plain_byte);
+        uint8_t encrypt(uint8_t plain_byte);
     };
 }
 

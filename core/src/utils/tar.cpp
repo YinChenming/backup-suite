@@ -283,17 +283,17 @@ bool TarFile::insert_entity(const FileEntityMeta& meta, const int offset) const
 
 FileEntityMeta TarFile::tar_header2file_meta(const TarFileHeader &header, TarStandard standard)
 {
-    auto path = std::string(header.name, strnlen(header.name, sizeof(header.name)));
-    auto prefix = std::string(header.prefix, sizeof(header.prefix));
-    if (prefix.front() != '\0' && !prefix.empty())
+    auto path = std::string(header.name);
+    auto prefix = std::string(header.prefix);
+    if (!prefix.empty() && path.size() >= 99 && prefix.front() != '\0')
     {
-        path = prefix + "/" + path;
+        path = prefix + path;
     }
     const size_t size = std::strtoull(header.size, nullptr, 8);
     FileEntityType type;
     switch (header.type_flag)
     {
-        case '0':
+        case '0': // NOLINT(*-branch-clone)
         case '\0':
             type = FileEntityType::RegularFile;
             break;
@@ -338,9 +338,9 @@ FileEntityMeta TarFile::tar_header2file_meta(const TarFileHeader &header, TarSta
         path,
         type,
         size,
-        std::chrono::system_clock::from_time_t(std::strtoull(header.mtime, nullptr, 8)),
-        std::chrono::system_clock::from_time_t(std::strtoull(header.mtime, nullptr, 8)),
-        std::chrono::system_clock::from_time_t(std::strtoull(header.mtime, nullptr, 8)),
+        std::chrono::system_clock::from_time_t(std::strtoll(header.mtime, nullptr, 8)),
+        std::chrono::system_clock::from_time_t(std::strtoll(header.mtime, nullptr, 8)),
+        std::chrono::system_clock::from_time_t(std::strtoll(header.mtime, nullptr, 8)),
         static_cast<uint32_t>(std::strtoul(header.mode, nullptr, 8)),
         static_cast<uint32_t>(std::strtoul(header.uid, nullptr, 8)),
         static_cast<uint32_t>(std::strtoul(header.gid, nullptr, 8)),
@@ -393,7 +393,7 @@ std::unique_ptr<TarFile::TarIstream> TarFile::get_file_stream(const std::filesys
         ifs_->seekg(offset, std::ios::beg);
         ifs_->read(block, sizeof(TarFileHeader));
         tar = std::make_unique<TarIstream>(*ifs_.get(), offset, meta);
-    } catch (const std::exception& e)
+    } catch ([[maybe_unused]] const std::exception& e)
     {
         return nullptr;
     }
@@ -416,7 +416,7 @@ bool TarFile::add_entity(ReadableFile& file)
         standard_ = TarStandard::POSIX_2001_PAX; // Default to PAX for better compatibility
 
     // Handle long filenames based on the standard
-    if (standard_ == TarStandard::GNU && full_path.size() > 100)
+    if (standard_ == TarStandard::GNU && full_path.size() >= 99)
     {
         // Create GNU long filename entry
         TarFileHeader long_name_header{};
@@ -450,11 +450,11 @@ bool TarFile::add_entity(ReadableFile& file)
         size_t padding = ((long_name_entry_path.size() / TarBlockSize) + static_cast<bool>(long_name_entry_path.size() % TarBlockSize)) * TarBlockSize;
         std::vector<char> name_block(padding, 0);
         memcpy(name_block.data(), long_name_entry_path.c_str(), long_name_entry_path.size());
-        ofs_->write(name_block.data(), name_block.size());
+        ofs_->write(name_block.data(), static_cast<long long>(name_block.size()));
 
         is_long_path = true;
     }
-    else if (standard_ == TarStandard::POSIX_2001_PAX && full_path.size() >= 256)
+    else if (standard_ == TarStandard::POSIX_2001_PAX && full_path.size() >= 253)
     {
         // Create PAX extended header for long filename
         std::string pax_content = " path=" + full_path + "\n";
@@ -594,7 +594,7 @@ bool TarFile::add_entity(ReadableFile& file)
         size_t padding = ((pax_header.size() / TarBlockSize) + static_cast<bool>(pax_header.size() % TarBlockSize)) * TarBlockSize;
         std::vector<char> pax_block(padding, 0);
         memcpy(pax_block.data(), pax_header.c_str(), pax_header.size());
-        ofs_->write(pax_block.data(), pax_block.size());
+        ofs_->write(pax_block.data(), static_cast<long long>(pax_block.size()));
     }
 
     // Get the current offset for the entry
@@ -610,16 +610,16 @@ bool TarFile::add_entity(ReadableFile& file)
     if (meta.type == FileEntityType::RegularFile)
     {
         size_t remaining = meta.size;
-        constexpr size_t buffer_size = 8192;
 
         while (remaining > 0)
         {
+            constexpr size_t buffer_size = 8192;
             size_t to_read = std::min(buffer_size, remaining);
             auto buffer = file.read(to_read);
             if (!buffer || buffer->empty())
                 break;
 
-            ofs_->write(reinterpret_cast<const char*>(buffer->data()), buffer->size());
+            ofs_->write(reinterpret_cast<const char*>(buffer->data()), static_cast<long long>(buffer->size()));
             remaining -= buffer->size();
         }
 
@@ -628,7 +628,7 @@ bool TarFile::add_entity(ReadableFile& file)
         if (padding > 0)
         {
             std::vector<char> pad_block(padding, 0);
-            ofs_->write(pad_block.data(), pad_block.size());
+            ofs_->write(pad_block.data(), static_cast<long long>(pad_block.size()));
         }
     }
     else if (meta.type == FileEntityType::Directory)
@@ -676,13 +676,18 @@ TarFileHeader TarFile::file_meta2tar_header(const FileEntityMeta &meta, const Ta
 {
     TarFileHeader header{};
     auto full_path = meta.path.generic_u8string();
-    if (full_path.size() > 255)
-        full_path = full_path.substr(0, 255);
-    if (full_path.size() > 100)
+    if (meta.type == FileEntityType::Directory && !full_path.empty() && full_path.back() != '/')
+    {
+        full_path += '/';
+    }
+    // prefix and name should end with \0
+    if (full_path.size() >= 253)
+        full_path = full_path.substr(0, 253);
+    if (full_path.size() >= 100)
     {
         // For ustar format, split into prefix and name
-        std::string prefix = full_path.substr(0, full_path.size() - 100);
-        std::string name = full_path.substr(full_path.size() - 100);
+        const std::string prefix = full_path.substr(0, full_path.size() - 99);
+        const std::string name = full_path.substr(full_path.size() - 99);
         strncpy_s(header.prefix, prefix.c_str(), sizeof(header.prefix));
         strncpy_s(header.name, name.c_str(), sizeof(header.name));
     }
@@ -703,7 +708,7 @@ TarFileHeader TarFile::file_meta2tar_header(const FileEntityMeta &meta, const Ta
     snprintf(header.mode, sizeof(header.mode), "%07o", meta.posix_mode);
     snprintf(header.uid, sizeof(header.uid), "%07o", meta.uid);
     snprintf(header.gid, sizeof(header.gid), "%07o", meta.gid);
-    snprintf(header.size, sizeof(header.size), "%011o", static_cast<unsigned int>(meta.size));
+    snprintf(header.size, sizeof(header.size), "%011o", static_cast<unsigned int>(meta.type == FileEntityType::Directory ? 0 : meta.size));
 
     // Set mtime based on modification time
     const auto mtime = std::chrono::duration_cast<std::chrono::seconds>(meta.modification_time.time_since_epoch()).count();

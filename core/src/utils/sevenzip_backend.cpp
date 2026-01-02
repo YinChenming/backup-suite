@@ -22,155 +22,213 @@
 #include <archive.h>
 #include <archive_entry.h>
 
-namespace {
-    bool file_exists(const std::filesystem::path& p)
-    {
-        try { return std::filesystem::exists(p) && std::filesystem::is_regular_file(p); }
-        catch (...) { return false; }
-    }
-
-    std::string find_7z_cli()
-    {
-#ifdef _WIN32
-        const std::vector<std::filesystem::path> default_candidates = {
-            "7z.exe", "7za.exe",
-            std::filesystem::path("C:/Program Files/7-Zip/7z.exe"),
-            std::filesystem::path("C:/Program Files (x86)/7-Zip/7z.exe")
-        };
-        const char* env_cli = std::getenv("SEVENZIP_CLI");
-        if (env_cli && *env_cli)
-        {
-            const std::filesystem::path p(env_cli);
-            if (file_exists(p)) return p.string();
-        }
-        const char* path_env = std::getenv("PATH");
-        if (path_env)
-        {
-            std::string_view path_sv(path_env);
-            size_t pos = 0;
-            while (pos <= path_sv.size())
-            {
-                size_t next = path_sv.find(';', pos);
-                auto segment = path_sv.substr(pos, next == std::string_view::npos ? path_sv.size() - pos : next - pos);
-                std::filesystem::path dir_path{std::string(segment)};
-                for (const auto& name : {"7z.exe", "7za.exe"})
-                {
-                    auto candidate = dir_path / name;
-                    if (file_exists(candidate)) return candidate.string();
-                }
-                if (next == std::string_view::npos) break;
-                pos = next + 1;
-            }
-        }
-        for (const auto& cand : default_candidates)
-        {
-            if (file_exists(cand)) return cand.string();
-        }
-        return {};
-#else
-        const std::vector<std::filesystem::path> default_candidates = {"7z", "7za", "/usr/bin/7z", "/usr/local/bin/7z"};
-        const char* env_cli = std::getenv("SEVENZIP_CLI");
-        if (env_cli && *env_cli)
-        {
-            std::filesystem::path p(env_cli);
-            if (file_exists(p)) return p.string();
-        }
-        const char* path_env = std::getenv("PATH");
-        if (path_env)
-        {
-            std::string_view path_sv(path_env);
-            size_t pos = 0;
-            while (pos <= path_sv.size())
-            {
-                size_t next = path_sv.find(':', pos);
-                auto segment = path_sv.substr(pos, next == std::string_view::npos ? path_sv.size() - pos : next - pos);
-                std::filesystem::path dir_path{std::string(segment)};
-                for (const auto& name : {"7z", "7za"})
-                {
-                    auto candidate = dir_path / name;
-                    if (file_exists(candidate)) return candidate.string();
-                }
-                if (next == std::string_view::npos) break;
-                pos = next + 1;
-            }
-        }
-        for (const auto& cand : default_candidates)
-        {
-            if (file_exists(cand)) return cand.string();
-        }
-        return {};
-#endif
-    }
-
-    std::filesystem::path normalize_rel(const std::filesystem::path& p)
-    {
-        std::string s = p.generic_u8string();
-        if (s.empty()) return {};
-        // strip leading './' and '/'
-        while (!s.empty())
-        {
-            if (s.rfind("./", 0) == 0) { s = s.substr(2); continue; }
-            if (s[0] == '/') { s = s.substr(1); continue; }
-            break;
-        }
-        return {s};
-    }
-    class MemoryReadableFile : public ReadableFile {
-        std::shared_ptr<std::vector<std::byte>> data_{};
-        size_t cursor_ = 0;
-    public:
-        MemoryReadableFile(const FileEntityMeta& meta, std::shared_ptr<std::vector<std::byte>> data)
-            : ReadableFile(meta), data_(std::move(data)) {}
-        [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read() override {
-            if (!data_ || cursor_ >= data_->size()) return nullptr;
-            auto out = std::make_unique<std::vector<std::byte>>(data_->begin() + static_cast<long long>(cursor_), data_->end());
-            cursor_ = data_->size();
-            return out;
-        }
-        [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read(size_t size) override {
-            if (!data_ || cursor_ >= data_->size() || size == 0) return nullptr;
-            const auto remain = data_->size() - cursor_;
-            const auto n = (std::min)(remain, size);
-            auto out = std::make_unique<std::vector<std::byte>>(data_->begin() + static_cast<long long>(cursor_), data_->begin() + static_cast<long long>(cursor_ + n));
-            cursor_ += n;
-            return out;
-        }
-        void close() override { cursor_ = data_ ? data_->size() : 0; }
-    };
+static bool file_exists(const std::filesystem::path& p)
+{
+    try { return std::filesystem::exists(p) && std::filesystem::is_regular_file(p); }
+    catch (...) { return false; }
 }
-
+static std::string find_7z_cli()
+{
+#ifdef _WIN32
+    const std::vector<std::filesystem::path> default_candidates = {
+        "7z.exe", "7za.exe",
+        std::filesystem::path("C:/Program Files/7-Zip/7z.exe"),
+        std::filesystem::path("C:/Program Files (x86)/7-Zip/7z.exe")
+    };
+    // Prefer a bundled 7z placed next to backup_suite_cli.exe (or the current process module)
+    {
+        wchar_t buf[MAX_PATH];
+        if (const DWORD len = GetModuleFileNameW(nullptr, buf, MAX_PATH); len > 0 && len < MAX_PATH)
+        {
+            const std::filesystem::path exe_path{std::wstring(buf, len)};
+            const auto exe_dir = exe_path.parent_path();
+            for (const auto& name : {"7z.exe", "7za.exe"})
+            {
+                if (const auto candidate = exe_dir / name; file_exists(candidate))
+                {
+                    return candidate.string();
+                }
+            }
+        }
+    }
+    if (const char* env_cli = std::getenv("SEVENZIP_CLI"); env_cli && *env_cli)
+    {
+        const std::filesystem::path p(env_cli);
+        if (file_exists(p)) return p.string();
+    }
+    if (const char* path_env = std::getenv("PATH"))
+    {
+        std::string_view path_sv(path_env);
+        size_t pos = 0;
+        while (pos <= path_sv.size())
+        {
+            const size_t next = path_sv.find(';', pos);
+            auto segment = path_sv.substr(pos, next == std::string_view::npos ? path_sv.size() - pos : next - pos);
+            std::filesystem::path dir_path{std::string(segment)};
+            for (const auto& name : {"7z.exe", "7za.exe"})
+            {
+                if (const auto candidate = dir_path / name; file_exists(candidate))
+                    return candidate.string();
+            }
+            if (next == std::string_view::npos) break;
+            pos = next + 1;
+        }
+    }
+    for (const auto& cand : default_candidates)
+    {
+        if (file_exists(cand)) return cand.string();
+    }
+    return {};
+#else
+    const std::vector<std::filesystem::path> default_candidates = {"7z", "7za", "/usr/bin/7z", "/usr/local/bin/7z"};
+    const char* env_cli = std::getenv("SEVENZIP_CLI");
+    if (env_cli && *env_cli)
+    {
+        std::filesystem::path p(env_cli);
+        if (file_exists(p)) return p.string();
+    }
+    const char* path_env = std::getenv("PATH");
+    if (path_env)
+    {
+        std::string_view path_sv(path_env);
+        size_t pos = 0;
+        while (pos <= path_sv.size())
+        {
+            size_t next = path_sv.find(':', pos);
+            auto segment = path_sv.substr(pos, next == std::string_view::npos ? path_sv.size() - pos : next - pos);
+            std::filesystem::path dir_path{std::string(segment)};
+            for (const auto& name : {"7z", "7za"})
+            {
+                auto candidate = dir_path / name;
+                if (file_exists(candidate)) return candidate.string();
+            }
+            if (next == std::string_view::npos) break;
+            pos = next + 1;
+        }
+    }
+    for (const auto& cand : default_candidates)
+    {
+        if (file_exists(cand)) return cand.string();
+    }
+    return {};
+#endif
+}
+static std::filesystem::path normalize_rel(const std::filesystem::path& p)
+{
+    std::string s = p.generic_u8string();
+    if (s.empty()) return {};
+    // strip leading './' and '/'
+    while (!s.empty())
+    {
+        if (s.rfind("./", 0) == 0) { s = s.substr(2); continue; }
+        if (s[0] == '/') { s = s.substr(1); continue; }
+        break;
+    }
+    return {s};
+}
+static FileEntityType filetype_from_archive_entry(const unsigned int type)
+{
+    switch (type)
+    {
+        case AE_IFREG: return FileEntityType::RegularFile;
+        case AE_IFDIR: return FileEntityType::Directory;
+        case AE_IFLNK: return FileEntityType::SymbolicLink;
+        default: return FileEntityType::Unknown;
+    }
+}
+static void set_times_from_entry(FileEntityMeta& meta, archive_entry* e)
+{
+    if (archive_entry_mtime_is_set(e))
+        meta.modification_time = std::chrono::system_clock::from_time_t(archive_entry_mtime(e));
+    if (archive_entry_atime_is_set(e))
+        meta.access_time = std::chrono::system_clock::from_time_t(archive_entry_atime(e));
+    if (archive_entry_ctime_is_set(e))
+        meta.creation_time = std::chrono::system_clock::from_time_t(archive_entry_ctime(e));
+}
+static std::string to_string_password(const std::vector<uint8_t>& pw)
+{
+    return {reinterpret_cast<const char*>(pw.data()), pw.size()};
+}
 // Simple in-memory catalog as a temporary fallback until p7zip wiring is complete
 static std::unordered_map<std::filesystem::path, std::shared_ptr<std::vector<std::byte>>> s_memData;
 static std::unordered_map<std::filesystem::path, FileEntityMeta> s_memMeta;
+static bool sevenz_cli_checked_ = false;
+static std::filesystem::path sevenz_cli_{};
 
-namespace {
-    FileEntityType filetype_from_archive_entry(unsigned int type)
-    {
-        switch (type)
-        {
-            case AE_IFREG: return FileEntityType::RegularFile;
-            case AE_IFDIR: return FileEntityType::Directory;
-            case AE_IFLNK: return FileEntityType::SymbolicLink;
-            default: return FileEntityType::Unknown;
-        }
-    }
-
-    void set_times_from_entry(FileEntityMeta& meta, archive_entry* e)
-    {
-        // Map archive times to chrono fields if present
-        if (archive_entry_mtime_is_set(e))
-            meta.modification_time = std::chrono::system_clock::from_time_t(archive_entry_mtime(e));
-        if (archive_entry_atime_is_set(e))
-            meta.access_time = std::chrono::system_clock::from_time_t(archive_entry_atime(e));
-        if (archive_entry_ctime_is_set(e))
-            meta.creation_time = std::chrono::system_clock::from_time_t(archive_entry_ctime(e));
-    }
-
-    std::string to_string_password(const std::vector<uint8_t>& pw)
-    {
-        return {reinterpret_cast<const char*>(pw.data()), pw.size()};
-    }
+bool P7zipBackend::ensure_sevenz_cli()
+{
+    if (sevenz_cli_checked_ && !sevenz_cli_.empty()) return true;
+    if (sevenz_cli_checked_ && sevenz_cli_.empty()) return false;
+    sevenz_cli_ = find_7z_cli();
+    sevenz_cli_checked_ = true;
+    return !sevenz_cli_.empty();
 }
+std::filesystem::path P7zipBackend::sevenz_cli()
+{
+    return sevenz_cli_;
+}
+
+#ifdef _WIN32
+bool P7zipBackend::run_7z_command(const std::vector<std::wstring>& args)
+{
+    if (!ensure_sevenz_cli()) return false;
+    auto strip_quotes = [](const std::string& s) -> std::string {
+        if (s.size() >= 2 && ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\'')))
+            return s.substr(1, s.size() - 2);
+        return s;
+    };
+    auto quote_if_needed = [](const std::wstring& w) {
+        if (w.find_first_of(L" \t\"") == std::wstring::npos) return w;
+        std::wstring out; out.reserve(w.size() + 2);
+        out.push_back(L'"');
+        for (const auto ch : w) {
+            if (ch == L'"') out.push_back(L'\\');
+            out.push_back(ch);
+        }
+        out.push_back(L'"');
+        return out;
+    };
+    const std::wstring exe = sevenz_cli().wstring();
+    std::wstring cmdLine = L"\"" + exe + L"\"";
+    for (const auto& arg : args)
+    {
+        cmdLine.push_back(L' ');
+        cmdLine.append(quote_if_needed(arg));
+    }
+    STARTUPINFOW si{}; si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (CreateProcessW(exe.c_str(), cmdLine.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi))
+    {
+        WaitForSingleObject(pi.hProcess, INFINITE);
+        DWORD exit_code = 1;
+        GetExitCodeProcess(pi.hProcess, &exit_code);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return exit_code == 0;
+    }
+    return false;
+}
+#else
+bool P7zipBackend::run_7z_command(const std::vector<std::string>& args)
+{
+    if (!ensure_sevenz_cli()) return false;
+    auto quote_if_needed = [](const std::string& s){
+        if (s.find_first_of(" \t\"") == std::string::npos) return s;
+        std::string out; out.reserve(s.size() + 2);
+        out.push_back('"');
+        for (auto ch : s) {
+            if (ch == '"') out.push_back('\\');
+            out.push_back(ch);
+        }
+        out.push_back('"');
+        return out;
+    };
+    std::ostringstream oss;
+    oss << '"' << sevenz_cli() << '"';
+    for (const auto& a : args) oss << ' ' << quote_if_needed(a);
+    return std::system(oss.str().c_str()) == 0;
+}
+#endif
 
 bool P7zipBackend::open(const std::filesystem::path& archive, ISevenZipBackend::Mode mode)
 {
@@ -179,17 +237,16 @@ bool P7zipBackend::open(const std::filesystem::path& archive, ISevenZipBackend::
     invalid_password_ = false;
     disk_index_built_ = false;
     disk_meta_.clear();
-    sevenz_cli_.clear();
+
+    if (!ensure_sevenz_cli())
+    {
+        open_ = false;
+        return false;
+    }
 
     // Write-only: prepare a staging directory; still maintain in-memory catalog for immediate reads
     if (mode_ == Mode::WriteOnly)
     {
-        sevenz_cli_ = find_7z_cli();
-        if (sevenz_cli_.empty())
-        {
-            open_ = false;
-            return false;
-        }
         try {
             const auto base = std::filesystem::temp_directory_path();
             const auto stamp = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -288,8 +345,8 @@ bool P7zipBackend::open(const std::filesystem::path& archive, ISevenZipBackend::
         }
     } catch (...) { /* best-effort */ }
 
-    // Windows 路径规范化：将所有 / 转换为 \
-    #ifdef _WIN32
+    // Windows 路径规范化：将所有 / 转换为 \\
+
     std::unordered_map<std::filesystem::path, FileEntityMeta> normalized_meta;
     for (auto& [p, meta] : disk_meta_) {
         std::string path_str = p.generic_string();
@@ -320,12 +377,6 @@ void P7zipBackend::close()
 #ifdef _WIN32
             // Ensure target path can be created fresh; tmp files from tests may pre-exist as empty placeholders
             std::filesystem::remove(archive_, ec);
-            auto strip_quotes = [](const std::string& s) -> std::string {
-                if (s.size() >= 2 && ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\'')))
-                    return s.substr(1, s.size() - 2);
-                return s;
-            };
-            const std::wstring exe = std::filesystem::path(strip_quotes(sevenz_cli_)).wstring();
             std::vector<std::wstring> args;
             args.emplace_back(L"a");
             args.emplace_back(L"-t7z");
@@ -340,44 +391,25 @@ void P7zipBackend::close()
             }
             if (!password_.empty() && encryption_ != sevenzip::EncryptionMethod::None)
             {
-                // 7z uses AES-256; map all AESx to -p without header encryption (libarchive doesn't support encrypted headers)
                 std::wstring wpw(password_.begin(), password_.end());
                 args.emplace_back(L"-p" + wpw);
                 args.emplace_back(L"-mhe=off");
             }
-            std::wstring cmdLine = L"\"" + exe + L"\"";
-            for (const auto& arg : args)
-            {
-                cmdLine.push_back(L' ');
-                cmdLine.append(arg);
-            }
-            STARTUPINFOW si{};
-            si.cb = sizeof(si);
-            PROCESS_INFORMATION pi{};
-            if (CreateProcessW(exe.c_str(), cmdLine.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi))
-            {
-                WaitForSingleObject(pi.hProcess, INFINITE);
-                CloseHandle(pi.hThread);
-                CloseHandle(pi.hProcess);
-            }
+            run_7z_command(args);
 #else
-            std::string opts;
+            std::vector<std::string> args{"a", "-t7z", "-y", archive_.string(), "*"};
             switch (compression_)
             {
-                case sevenzip::CompressionMethod::LZMA:  opts += " -m0=lzma"; break;
-                case sevenzip::CompressionMethod::LZMA2: opts += " -m0=lzma2"; break;
-                case sevenzip::CompressionMethod::Deflate: opts += " -m0=deflate"; break;
+                case sevenzip::CompressionMethod::LZMA:  args.emplace_back("-m0=lzma"); break;
+                case sevenzip::CompressionMethod::LZMA2: args.emplace_back("-m0=lzma2"); break;
+                case sevenzip::CompressionMethod::Deflate: args.emplace_back("-m0=deflate"); break;
             }
             if (!password_.empty() && encryption_ != sevenzip::EncryptionMethod::None)
             {
-                // 7z uses AES-256; map all AESx to -p without header encryption (libarchive doesn't support encrypted headers)
-                opts += " -p" + to_string_password(password_) + " -mhe=off";
+                args.emplace_back(std::string("-p") + to_string_password(password_));
+                args.emplace_back("-mhe=off");
             }
-            auto quote = [](const std::filesystem::path& p){ return std::string("\"") + p.string() + "\""; };
-            auto quote_cmd = [](const std::string& s){ return std::string("\"") + s + "\""; };
-            const std::string sevenz = quote_cmd(sevenz_cli_);
-            std::string cmd = sevenz + " a -t7z -y " + quote(archive_) + " *" + opts;
-            std::system(cmd.c_str());
+            run_7z_command(args);
 #endif
             std::filesystem::current_path(old_cwd, ec);
         }
@@ -386,12 +418,6 @@ void P7zipBackend::close()
             // fallback: try with explicit path even if chdir failed
 #ifdef _WIN32
             std::filesystem::remove(archive_, ec);
-            auto strip_quotes = [](const std::string& s) -> std::string {
-                if (s.size() >= 2 && ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\'')))
-                    return s.substr(1, s.size() - 2);
-                return s;
-            };
-            const std::wstring exe = std::filesystem::path(strip_quotes(sevenz_cli_)).wstring();
             std::vector<std::wstring> args;
             args.emplace_back(L"a");
             args.emplace_back(L"-t7z");
@@ -410,38 +436,21 @@ void P7zipBackend::close()
                 args.emplace_back(L"-p" + wpw);
                 args.emplace_back(L"-mhe=off");
             }
-            std::wstring cmdLine = L"\"" + exe + L"\"";
-            for (const auto& arg : args)
-            {
-                cmdLine.push_back(L' ');
-                cmdLine.append(arg);
-            }
-            STARTUPINFOW si{};
-            si.cb = sizeof(si);
-            PROCESS_INFORMATION pi{};
-            if (CreateProcessW(exe.c_str(), cmdLine.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi))
-            {
-                WaitForSingleObject(pi.hProcess, INFINITE);
-                CloseHandle(pi.hThread);
-                CloseHandle(pi.hProcess);
-            }
+            run_7z_command(args);
 #else
-            std::string opts;
+            std::vector<std::string> args{"a", "-t7z", "-y", archive_.string(), (staging_dir_ / "*").string()};
             switch (compression_)
             {
-                case sevenzip::CompressionMethod::LZMA:  opts += " -m0=lzma"; break;
-                case sevenzip::CompressionMethod::LZMA2: opts += " -m0=lzma2"; break;
-                case sevenzip::CompressionMethod::Deflate: opts += " -m0=deflate"; break;
+                case sevenzip::CompressionMethod::LZMA:  args.emplace_back("-m0=lzma"); break;
+                case sevenzip::CompressionMethod::LZMA2: args.emplace_back("-m0=lzma2"); break;
+                case sevenzip::CompressionMethod::Deflate: args.emplace_back("-m0=deflate"); break;
             }
             if (!password_.empty() && encryption_ != sevenzip::EncryptionMethod::None)
             {
-                opts += " -p" + to_string_password(password_) + " -mhe=off";
+                args.emplace_back(std::string("-p") + to_string_password(password_));
+                args.emplace_back("-mhe=off");
             }
-            auto quote = [](const std::filesystem::path& p){ return std::string("\"") + p.string() + "\""; };
-            auto quote_cmd = [](const std::string& s){ return std::string("\"") + s + "\""; };
-            const std::string sevenz = quote_cmd(sevenz_cli_);
-            std::string cmd = sevenz + " a -t7z -y " + quote(archive_) + " " + quote(staging_dir_ / "*") + opts;
-            std::system(cmd.c_str());
+            run_7z_command(args);
 #endif
         }
         try { std::filesystem::remove_all(staging_dir_); } catch (...) {}
@@ -491,23 +500,75 @@ std::vector<sevenzip::DirEntry> P7zipBackend::list_dir(const std::filesystem::pa
     return result;
 }
 
+std::string P7zipBackend::build_7z_command_line(const std::vector<std::string>& args)
+{
+    auto quote_if_needed = [](const std::string& s){
+        if (s.find_first_of(" \t\"") == std::string::npos) return s;
+        std::string out; out.reserve(s.size() + 2);
+        out.push_back('"');
+        for (const auto ch : s) { if (ch == '"') out.push_back('\\'); out.push_back(ch);} out.push_back('"');
+        return out;
+    };
+    std::ostringstream oss;
+    oss << '"' << sevenz_cli() << '"';
+    for (const auto& a : args) oss << ' ' << quote_if_needed(a);
+    return oss.str();
+}
+
+bool P7zipBackend::get_file_impl_extract(const std::filesystem::path& normalized_query,
+                                         const std::shared_ptr<std::vector<std::byte>>& out_data)
+{
+    std::vector<std::string> args;
+    args.emplace_back("x");
+    args.emplace_back("-so");
+    if (!password_.empty()) {
+        args.emplace_back(std::string("-p") + to_string_password(password_));
+    }
+    args.emplace_back(archive_.string());
+    args.emplace_back(normalized_query.generic_string());
+
+#ifdef _WIN32
+    const std::wstring wcmd = sevenz_cli().wstring();
+    std::wostringstream woss;
+    woss << L'"' << wcmd << L'"';
+    for (const auto& a : args) {
+        woss << L' ' << std::wstring(a.begin(), a.end());
+    }
+    FILE* pipe = _wpopen(woss.str().c_str(), L"rb");
+#else
+    const auto cmd = build_7z_command_line(args);
+    FILE* pipe = popen(cmd.c_str(), "r");
+#endif
+    if (!pipe) return false;
+
+    std::vector<char> buf(64 * 1024);
+    size_t n = 0;
+    while ((n = fread(buf.data(), 1, buf.size(), pipe)) > 0) {
+        size_t old = out_data->size();
+        out_data->resize(old + n);
+        std::memcpy(out_data->data() + old, buf.data(), n);
+    }
+#ifdef _WIN32
+    _pclose(pipe);
+#else
+    pclose(pipe);
+#endif
+    return !out_data->empty();
+}
+
 std::unique_ptr<ReadableFile> P7zipBackend::get_file(const std::filesystem::path& path)
 {
     if (mode_ == Mode::WriteOnly) return nullptr;
 
-    // 规范化路径以处理 Windows/POSIX 路径差异
     auto normalize = [](const std::filesystem::path& p) {
-        std::string str = p.generic_string(); // 转为 forward slashes
-        while (!str.empty() && str.back() == '/') str.pop_back(); // 移除尾部斜杠
+        std::string str = p.generic_string();
+        while (!str.empty() && str.back() == '/') str.pop_back();
         return std::filesystem::path(str);
     };
-
     const auto normalized_query = normalize(path);
 
-    // Prefer on-disk archive
     if (disk_index_built_)
     {
-        // 检查文件是否在 disk_meta_ 中
         bool found_in_meta = false;
         for (const auto& [key, meta] : disk_meta_) {
             if (normalize(key) == normalized_query) {
@@ -516,50 +577,16 @@ std::unique_ptr<ReadableFile> P7zipBackend::get_file(const std::filesystem::path
                 break;
             }
         }
+        if (!found_in_meta) return nullptr;
 
-        if (!found_in_meta) {
-            return nullptr;
-        }
-
-        // 使用系统 7z 命令提取文件内容
-        std::ostringstream cmd_stream;
-        cmd_stream << "7z x -so";
-
-        if (!password_.empty()) {
-            cmd_stream << " -p" << to_string_password(password_);
-        }
-
-        cmd_stream << " \"" << archive_.string() << "\" \"" << normalized_query.generic_string() << "\"";
-
-        std::string cmd = cmd_stream.str();
-
-        FILE* pipe = _popen(cmd.c_str(), "rb");
-        if (!pipe) {
-            return nullptr;
-        }
+        if (!ensure_sevenz_cli()) return nullptr;
 
         auto data = std::make_shared<std::vector<std::byte>>();
-        std::vector<char> buf(64 * 1024);
-        size_t n = 0;
-        while ((n = fread(buf.data(), 1, buf.size(), pipe)) > 0) {
-            size_t old = data->size();
-            data->resize(old + n);
-            std::memcpy(data->data() + old, buf.data(), n);
-        }
+        if (!get_file_impl_extract(normalized_query, data)) return nullptr;
 
-        _pclose(pipe);
-
-        if (data->empty()) {
-            return nullptr;
-        }
-
-        // 获取文件元数据
         FileEntityMeta meta;
         for (const auto& [key, m] : disk_meta_) {
-            if (normalize(key) == normalized_query) {
-                meta = m;
-                break;
-            }
+            if (normalize(key) == normalized_query) { meta = m; break; }
         }
 
         return std::make_unique<MemoryReadableFile>(meta, std::move(data));
@@ -597,7 +624,7 @@ bool P7zipBackend::exists(const std::filesystem::path& path)
 
 static std::shared_ptr<std::vector<std::byte>> to_bytes(ReadableFile& file)
 {
-    auto all = file.read();
+    const auto all = file.read();
     if (!all) return {};
     return std::make_shared<std::vector<std::byte>>(std::move(*all));
 }
@@ -647,8 +674,7 @@ bool P7zipBackend::add_folder(Folder& folder)
     if (!staging_dir_.empty())
     {
         try {
-            const auto rel = normalize_rel(folder.get_meta().path);
-            if (!rel.empty())
+            if (const auto rel = normalize_rel(folder.get_meta().path); !rel.empty())
                 std::filesystem::create_directories(staging_dir_ / rel);
         } catch (...) { /* ignore staging errors */ }
     }

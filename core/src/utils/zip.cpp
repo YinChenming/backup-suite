@@ -201,7 +201,7 @@ static FileEntityMeta sql_zip_entity2file_meta(const db::ZipInitializationStrate
     auto [version_made_by, version_needed, general_purpose, compression_method, last_modified, crc32, compressed_size, uncompressed_size, disk_number, internal_attributes, external_attributes, local_header_offset, filename, extra_field, file_comment] = entity;
 
     // 根据外部属性判断文件类型
-    FileEntityType type = FileEntityType::RegularFile;
+    auto type = FileEntityType::RegularFile;
     if (external_attributes & 0x40000000) { // S_IFDIR
         type = FileEntityType::Directory;
     } else if (external_attributes & 0xA0000000) { // S_IFLNK
@@ -213,9 +213,9 @@ static FileEntityMeta sql_zip_entity2file_meta(const db::ZipInitializationStrate
         std::filesystem::path(filename),
         type,
         static_cast<size_t>(uncompressed_size),
-        std::chrono::system_clock::from_time_t(static_cast<time_t>(last_modified)),
-        std::chrono::system_clock::from_time_t(static_cast<time_t>(last_modified)),
-        std::chrono::system_clock::from_time_t(static_cast<time_t>(last_modified)),
+        std::chrono::system_clock::from_time_t(last_modified),
+        std::chrono::system_clock::from_time_t(last_modified),
+        std::chrono::system_clock::from_time_t(last_modified),
         0, // posix_mode
         0, // uid
         0, // gid
@@ -263,7 +263,7 @@ void ZipFile::init_db_from_zip()
     {
         ifs_->seekg(-2048, std::ios::end);
     }
-    ifs_->read(buffer + start_of_buffer, 2048 - start_of_buffer);
+    ifs_->read(buffer + start_of_buffer, static_cast<long long>(2048 - start_of_buffer));
     if (start_of_buffer)
     {
         ifs_->seekg(0, std::ios::beg);
@@ -307,8 +307,8 @@ void ZipFile::init_db_from_zip()
             }
         } else
         {
-            ifs_->seekg(-next_read, std::ios::cur);
-            ifs_->read(buffer, next_read);
+            ifs_->seekg(static_cast<long long>(-next_read), std::ios::cur);
+            ifs_->read(buffer, static_cast<long long>(next_read));
             if (ifs_->gcount() != next_read)
             {
                 std::cerr << "no EOCD, exit!" << std::endl;
@@ -469,19 +469,34 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
         } else
         {
             // 如果没有提供posix_mode，则根据文件类型设置默认权限
-            if (meta.type == FileEntityType::RegularFile)
+            switch (meta.type)
             {
-                external_file_attributes = 0x81A40000; // 普通文件
-            } else if (meta.type == FileEntityType::Directory)
-            {
-                external_file_attributes = 0x41ED0000; // 目录
-            } else if (meta.type == FileEntityType::SymbolicLink)
-            {
-                external_file_attributes = 0xA1FF0000; // 符号链接
-            } else
-            {
-                external_file_attributes = 0x81A40000; // 默认普通文件
+                case FileEntityType::RegularFile:
+                    external_file_attributes = 0x81A40000; // 普通文件，rw-r--r--
+                    break;
+                case FileEntityType::Directory:
+                    external_file_attributes = 0x41ED0000; // 目录，r
+                    break;
+                case FileEntityType::SymbolicLink:
+                    external_file_attributes = 0xA1FF0000; // 符号链接，rwxrwxrwx
+                    break;
+                default:
+                    external_file_attributes = 0x81A40000; // 默认普通文件，rw-r--r--
+                    break;
             }
+            // if (meta.type == FileEntityType::RegularFile)
+            // {
+            //     external_file_attributes = 0x81A40000; // 普通文件
+            // } else if (meta.type == FileEntityType::Directory)
+            // {
+            //     external_file_attributes = 0x41ED0000; // 目录
+            // } else if (meta.type == FileEntityType::SymbolicLink)
+            // {
+            //     external_file_attributes = 0xA1FF0000; // 符号链接
+            // } else
+            // {
+            //     external_file_attributes = 0x81A40000; // 默认普通文件
+            // }
         }
     }
     else
@@ -576,11 +591,12 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
     ofs_->write(reinterpret_cast<const char*>(&local_header), sizeof(local_header));
 
     // 写入文件头后立刻紧跟文件名
-    ofs_->write(reinterpret_cast<const char*>(filename.c_str()), filename.size());
+    // ReSharper disable once CppRedundantCastExpression
+    ofs_->write(reinterpret_cast<const char*>(filename.c_str()), static_cast<long long>(filename.size()));
     // 写入文件名后紧跟扩展字段
     if (!extra_field.empty())
     {
-        ofs_->write(reinterpret_cast<const char*>(extra_field.data()), extra_field.size());
+        ofs_->write(reinterpret_cast<const char*>(extra_field.data()), static_cast<long long>(extra_field.size()));
     }
 
     // 写入文件内容并计算CRC32
@@ -649,7 +665,7 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
             }
             else
             {
-                ofs_->write(reinterpret_cast<const char*>(buffer->data()), buffer->size());
+                ofs_->write(reinterpret_cast<const char*>(buffer->data()), static_cast<long long>(buffer->size()));
             }
         }
     } else
@@ -661,7 +677,7 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
     // 回写CRC32和压缩大小到本地文件头
     crc32 = crc32_inst.finalize();
     const auto file_end_pos = ofs_->tellp();
-    ofs_->seekp(local_header_offset + offsetof(ZipLocalFileHeader, crc32));
+    ofs_->seekp(static_cast<long long>(local_header_offset + offsetof(ZipLocalFileHeader, crc32)));
     crc32 = htole32(crc32);
     ofs_->write(reinterpret_cast<const char*>(&crc32), sizeof(crc32));
     crc32 = le32toh(crc32);
@@ -828,7 +844,7 @@ std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesys
     {
         entity = db_.query_one<db::ZipInitializationStrategy::SQLZipEntity>(std::move(stmt));
         cdfh = sql_entity_to_cdfh(entity);
-    } catch (const std::exception& e)
+    } catch ([[maybe_unused]] const std::exception& e)
     {
         return nullptr;
     }
@@ -874,11 +890,11 @@ std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesys
                 // 解密头12个字节,判断是否与 CRC 相符
                 encryption::ZipCrypto decoder{password_};
                 uint8_t zip_crypto_header[12];
-                ifs_->seekg(real_offset, std::ios::beg);
+                ifs_->seekg(static_cast<long long>(real_offset), std::ios::beg);
                 ifs_->read(reinterpret_cast<char*>(zip_crypto_header), 12);
-                for (int i=0; i<12; i++)
+                for (unsigned char & i : zip_crypto_header)
                 {
-                    zip_crypto_header[i] = decoder.decrypt(zip_crypto_header[i]);
+                    i = decoder.decrypt(i);
                 }
                 //  After the header is decrypted, the last 1 or 2 bytes in Buffer
                 // SHOULD be the high-order word/byte of the CRC for the file being
@@ -889,7 +905,7 @@ std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesys
                 // check highest bit of CRC
                 if (static_cast<uint8_t>((lfh.crc32 >> 24) & 0xFF) == zip_crypto_header[11])
                 {
-                    if (uint16_t version_needed = static_cast<uint16_t>(lfh.version_needed);
+                    if (auto version_needed = static_cast<uint16_t>(lfh.version_needed);
                         version_needed >= 20 && version_needed < 30)
                     {
                         if (static_cast<uint8_t>((lfh.crc32 >> 16) & 0xFF) == zip_crypto_header[10])
@@ -980,7 +996,7 @@ void ZipFile::close() {
     }
 
     // 计算中央目录的偏移量和大小
-    uint32_t central_directory_offset = static_cast<uint32_t>(ofs_->tellp());
+    uint32_t central_directory_offset = ofs_->tellp();
     uint32_t central_directory_size = 0;
     uint16_t total_central_directory_records = 0;
 
@@ -993,21 +1009,23 @@ void ZipFile::close() {
     for (const auto& entity : rs)
     {
         total_central_directory_records++;
-        auto cdfh = sql_entity_to_cdfh(entity);
-        cdfh_host_to_le(cdfh.record);
-        ofs_->write(reinterpret_cast<const char*>(&cdfh.record), sizeof(ZipCentralDirectoryFileHeader));
+        auto [file_name, extra_field, file_comment, record] = sql_entity_to_cdfh(entity);
+        cdfh_host_to_le(record);
+        ofs_->write(reinterpret_cast<const char*>(&record), sizeof(ZipCentralDirectoryFileHeader));
         central_directory_size += sizeof(ZipCentralDirectoryFileHeader);
-        ofs_->write(reinterpret_cast<const char*>(cdfh.file_name.c_str()), cdfh.file_name.size());
-        central_directory_size += static_cast<uint32_t>(cdfh.file_name.size());
-        if (!cdfh.extra_field.empty())
+        // ReSharper disable once CppRedundantCastExpression
+        ofs_->write(reinterpret_cast<const char*>(file_name.c_str()), static_cast<long long>(file_name.size()));
+        central_directory_size += static_cast<uint32_t>(file_name.size());
+        if (!extra_field.empty())
         {
-            ofs_->write(reinterpret_cast<const char*>(cdfh.extra_field.data()), cdfh.extra_field.size());
-            central_directory_size += static_cast<uint32_t>(cdfh.extra_field.size());
+            ofs_->write(reinterpret_cast<const char*>(extra_field.data()), static_cast<long long>(extra_field.size()));
+            central_directory_size += static_cast<uint32_t>(extra_field.size());
         }
-        if (!cdfh.file_comment.empty())
+        if (!file_comment.empty())
         {
-            ofs_->write(reinterpret_cast<const char*>(cdfh.file_comment.c_str()), cdfh.file_comment.size());
-            central_directory_size += static_cast<uint32_t>(cdfh.file_comment.size());
+            // ReSharper disable once CppRedundantCastExpression
+            ofs_->write(reinterpret_cast<const char*>(file_comment.c_str()), static_cast<long long>(file_comment.size()));
+            central_directory_size += static_cast<uint32_t>(file_comment.size());
         }
     }
 
@@ -1025,7 +1043,8 @@ void ZipFile::close() {
     ofs_->write(reinterpret_cast<const char*>(&eocd), sizeof(eocd));
     if (!comment_.empty())
     {
-        ofs_->write(reinterpret_cast<const char*>(comment_.data()), comment_.size());
+        // ReSharper disable once CppRedundantCastExpression
+        ofs_->write(reinterpret_cast<const char*>(comment_.data()), static_cast<long long>(comment_.size()));
     }
     // 关闭文件
     ofs_->close();
@@ -1051,7 +1070,7 @@ FileEntityMeta ZipFile::cdfh_to_file_meta(const CentralDirectoryEntry& cdfh)
         0
     };
     std::vector<std::vector<uint8_t>> extra_fields;
-    for (size_t i = 0; i + 4 < cdfh.extra_field.size();)
+    for (long long i = 0; i + 4 < cdfh.extra_field.size();)
     {
         const uint16_t length = le16toh(*reinterpret_cast<const uint16_t*>(&cdfh.extra_field[i+2]));
         if (i + 4 + length > cdfh.extra_field.size()) break;
@@ -1086,7 +1105,7 @@ FileEntityMeta ZipFile::cdfh_to_file_meta(const CentralDirectoryEntry& cdfh)
     } else if (cdfh.record.version_made_by == ZipVersionMadeBy::Unix)
     {
         meta.posix_mode = (cdfh.record.external_file_attributes >> 16) & 0xFFFF;
-        switch (const uint32_t file_type_mask = meta.posix_mode & 0xF000) {
+        switch (meta.posix_mode & 0xF000) {
             case 0xA000: meta.type = FileEntityType::SymbolicLink; break;
             case 0x4000: meta.type = FileEntityType::Directory;    break;
             case 0x8000: meta.type = FileEntityType::RegularFile;   break;
@@ -1110,10 +1129,10 @@ FileEntityMeta ZipFile::cdfh_to_file_meta(const CentralDirectoryEntry& cdfh)
     update_file_entity_meta(meta);
     return meta;
 }
-const std::vector<std::vector<uint8_t>> &ZipFile::get_extra_field_list(const std::vector<uint8_t>& extra_field)
+std::vector<std::vector<uint8_t>> ZipFile::get_extra_field_list(const std::vector<uint8_t>& extra_field)
 {
     std::vector<std::vector<uint8_t>> extra_fields;
-    for (size_t i = 0; i + 4 < extra_field.size();)
+    for (long long i = 0; i + 4 < extra_field.size();)
     {
         const uint16_t length = le16toh(*reinterpret_cast<const uint16_t*>(&extra_field[i+2]));
         if (i + 4 + length > extra_field.size()) break;

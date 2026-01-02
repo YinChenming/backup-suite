@@ -326,7 +326,7 @@ bool WindowsDevice::_write_file(ReadableFile &file, const bool force)
         if (!meta.path.empty()) {
             std::filesystem::create_directories(realpath.parent_path());
         }
-    } catch (const std::exception& e) {
+    } catch ([[maybe_unused]] const std::exception& e) {
         return false;
     }
     std::ofstream ofs(realpath, std::ios::out | std::ios::binary | std::ios::trunc);
@@ -348,7 +348,10 @@ bool WindowsDevice::_write_file(ReadableFile &file, const bool force)
     ofs.close();
 
     // 尝试设置文件属性，但如果失败不影响恢复操作的成功
-    set_file_attributes(meta);
+    if (set_file_attributes(meta))
+    {
+        // ignore result
+    }
     return true;
 }
 

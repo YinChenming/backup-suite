@@ -35,6 +35,7 @@ namespace db
     template <typename T>
     inline constexpr bool is_vector_v = is_vector<T>::value;
     template <typename T>
+    // ReSharper disable once CppNotAllPathsReturnValue
     inline T get_column_value(sqlite3_stmt* stmt, const int col)
     {
         if constexpr (std::is_same_v<T, std::string>)
@@ -73,7 +74,7 @@ namespace db
         {
             static_assert(false, "unsupported type for get_column_value");
         }
-        return T{};
+        // return T{};
     }
 
     inline void bind_parameter_null(sqlite3_stmt* stmt, int index)

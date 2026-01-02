@@ -41,7 +41,7 @@ public:
         uint32_t result = 0;
         while (n--)
         {
-            result = (result << 1) | read_bit();
+            result = (result << 1) | static_cast<uint32_t>(read_bit());
         }
         return result;
     }
@@ -185,7 +185,7 @@ public:
     FileEntityIstream(std::ifstream &ifs, const int offset, const FileEntityMeta &meta):
         FileEntityIstream(std::make_unique<IstreamBuf>(ifs, offset, meta.size), meta)
     { }
-    FileEntityIstream(std::unique_ptr<IstreamBuf> &&ifs, FileEntityMeta meta) : std::istream(nullptr), buffer_(std::move(ifs)), meta_(std::move(meta))
+    FileEntityIstream(std::unique_ptr<IstreamBuf> &&ifs, FileEntityMeta meta) : std::istream(nullptr), meta_(std::move(meta)), buffer_(std::move(ifs))
     {
         rdbuf(buffer_.get());
         if (!meta_.size)

@@ -66,6 +66,29 @@ public:
 // Placeholder p7zip-backed implementation; real integration to be filled next.
 class BACKUP_SUITE_API P7zipBackend : public ISevenZipBackend
 {
+    class MemoryReadableFile : public ReadableFile {
+        std::shared_ptr<std::vector<std::byte>> data_{};
+        size_t cursor_ = 0;
+    public:
+        MemoryReadableFile(const FileEntityMeta& meta, std::shared_ptr<std::vector<std::byte>> data)
+            : ReadableFile(meta), data_(std::move(data)) {}
+        [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read() override {
+            if (!data_ || cursor_ >= data_->size()) return nullptr;
+            auto out = std::make_unique<std::vector<std::byte>>(data_->begin() + static_cast<long long>(cursor_), data_->end());
+            cursor_ = data_->size();
+            return out;
+        }
+        [[nodiscard]] std::unique_ptr<std::vector<std::byte>> read(const size_t size) override {
+            if (!data_ || cursor_ >= data_->size() || size == 0) return nullptr;
+            const auto remain = data_->size() - cursor_;
+            const auto n = (std::min)(remain, size);
+            auto out = std::make_unique<std::vector<std::byte>>(data_->begin() + static_cast<long long>(cursor_), data_->begin() + static_cast<long long>(cursor_ + n));
+            cursor_ += n;
+            return out;
+        }
+        void close() override { cursor_ = data_ ? data_->size() : 0; }
+    };
+
     std::filesystem::path archive_{};
     Mode mode_ = Mode::ReadOnly;
     bool open_ = false;
@@ -73,12 +96,20 @@ class BACKUP_SUITE_API P7zipBackend : public ISevenZipBackend
     std::vector<uint8_t> password_{};
     sevenzip::CompressionMethod compression_ = sevenzip::CompressionMethod::LZMA2;
     sevenzip::EncryptionMethod encryption_ = sevenzip::EncryptionMethod::None;
-    std::string sevenz_cli_; // resolved path to 7z/7za for write mode
     // libarchive-based read-only index
     bool disk_index_built_ = false;
     std::unordered_map<std::filesystem::path, FileEntityMeta> disk_meta_{};
     // staging area for write mode to produce a real .7z via external 7z
     std::filesystem::path staging_dir_{};
+
+#ifdef _WIN32
+    static bool run_7z_command(const std::vector<std::wstring>& args);
+#else
+    bool run_7z_command(const std::vector<std::string>& args);
+#endif
+    [[nodiscard]] static std::string build_7z_command_line(const std::vector<std::string>& args);
+    bool get_file_impl_extract(const std::filesystem::path& normalized_query,
+                               const std::shared_ptr<std::vector<std::byte>>& out_data);
 public:
     bool open(const std::filesystem::path& archive, Mode mode) override;
     void close() override;
@@ -93,6 +124,10 @@ public:
     bool exists(const std::filesystem::path& path) override;
     bool add_file(ReadableFile& file) override;
     bool add_folder(Folder& folder) override;
+
+    // Helper utilities to resolve and run the external 7z CLI
+    static bool ensure_sevenz_cli();
+    static std::filesystem::path sevenz_cli();
 };
 
 #endif // BACKUPSUITE_SEVENZIP_BACKEND_H

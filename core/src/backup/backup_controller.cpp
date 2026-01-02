@@ -47,23 +47,23 @@ bool BackupController::run_restore(Device& from, Device& to) const
 {
     try {
         // 确保目标目录为空或存在
-        auto target_meta = to.get_meta("");
+        const auto target_meta = to.get_meta("");
         if (target_meta && target_meta->type != FileEntityType::Unknown) {
             // 目标不为空，可以选择清空或跳过
         }
 
         return copy_folder_recursive(from, to, "");
     }
-    catch (const std::exception& e) {
+    catch ([[maybe_unused]] const std::exception& e) {
         return false;
     }
 }
 
-bool BackupController::copy_folder_recursive(Device& from, Device& to, const std::filesystem::path& path) const
+bool BackupController::copy_folder_recursive(Device& from, Device& to, const std::filesystem::path& path) const // NOLINT(*-no-recursion)
 {
     try {
         // 获取当前路径的文件夹
-        auto folder = from.get_folder(path);
+        const auto folder = from.get_folder(path);
         if (!folder) {
             return false;
         }
@@ -97,8 +97,7 @@ bool BackupController::copy_folder_recursive(Device& from, Device& to, const std
 
         // 先递归处理目录
         for (auto& child : dirs) {
-            const auto& child_meta = child.get_meta();
-            if (!copy_folder_recursive(from, to, child_meta.path)) {
+            if (const auto& child_meta = child.get_meta(); !copy_folder_recursive(from, to, child_meta.path)) {
                 return false;
             }
         }
@@ -118,7 +117,7 @@ bool BackupController::copy_folder_recursive(Device& from, Device& to, const std
 
         return true;
     }
-    catch (const std::exception& e) {
+    catch ([[maybe_unused]] const std::exception& e) {
         return false;
     }
 }
@@ -229,13 +228,17 @@ bool BackupController::should_backup_file(const FileEntityMeta& meta) const
     }
 
     // 11. 检查组名排除
-    for (const auto& group : config.exclude_groups) {
-        if (meta.group_name == group) {
-            return false;
-        }
-    }
-
-    return true;
+    return std::all_of(config.exclude_groups.begin(), config.exclude_groups.end(),
+                              [&meta](const std::string& group) {
+                                  return meta.group_name != group;
+                              });
+    // for (const auto& group : config.exclude_groups) {
+    //     if (meta.group_name == group) {
+    //         return false;
+    //     }
+    // }
+    //
+    // return true;
 }
 
 bool BackupController::match_pattern(const std::string& path, const std::string& pattern) const
@@ -252,12 +255,12 @@ bool BackupController::match_pattern(const std::string& path, const std::string&
         std::string regex_pattern;
 
         // 检查是否包含通配符
-        bool has_wildcards = pattern.find('*') != std::string::npos ||
+        const bool has_wildcards = pattern.find('*') != std::string::npos ||
                             pattern.find('?') != std::string::npos;
 
         // 构建正则表达式：转义特殊字符，但保留通配符
         const std::string special_chars = ".^$+()[]{}|\\";
-        for (char c : pattern) {
+        for (const char c : pattern) {
             if (c == '*') {
                 regex_pattern += ".*";
             } else if (c == '?') {
@@ -277,7 +280,7 @@ bool BackupController::match_pattern(const std::string& path, const std::string&
         }
 
         try {
-            std::regex re(regex_pattern, std::regex::icase);
+            const std::regex re(regex_pattern, std::regex::icase);
             return std::regex_match(path, re);
         } catch (const std::regex_error&) {
             return false;

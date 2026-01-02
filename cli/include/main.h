@@ -8,10 +8,6 @@
 #include <string>
 #include <vector>
 #include <filesystem>
-#include "filesystem/system_device.h"
-#include "backup/backup_controller.h"
-#include "filesystem/compresses_device.h"
-#include "filesystem/seven_zip_device.h"
 
 struct CLIOptions {
     bool backup_mode = false;

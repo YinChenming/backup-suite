@@ -279,14 +279,13 @@ namespace zip
             { }
             int_type underflow() override
             {
-                const auto result = IstreamBuf::underflow();
-                if (result == traits_type::eof()) {
+                if (const auto result = IstreamBuf::underflow(); result == traits_type::eof()) {
                     return result;
                 }
 
                 // 获取当前基类 buffer 的范围
-                char* start = gptr();
-                char* end = egptr();
+                const char* start = gptr();
+                const char* end = egptr();
                 size_t len = end - start;
 
                 // 3. 原地解密当前 buffer 中的剩余数据
@@ -324,7 +323,7 @@ namespace zip
                 ZipFile(path, ZipMode::output, ifsDeleter, ofsDeleter);
             }
         }
-        ZipFile(const std::filesystem::path& path, ZipMode mode, const FStreamDeleter<std::ifstream>& ifsDeleter = FStreamDeleter<std::ifstream>(),
+        ZipFile(const std::filesystem::path& path, const ZipMode mode, const FStreamDeleter<std::ifstream>& ifsDeleter = FStreamDeleter<std::ifstream>(),
             const FStreamDeleter<std::ofstream>& ofsDeleter = FStreamDeleter<std::ofstream>()) : db_(std::move(std::make_unique<db::ZipInitializationStrategy>()).get()), ifs_(nullptr, ifsDeleter), ofs_(nullptr, ofsDeleter)
             {
                 if (mode == ZipMode::input)
@@ -420,7 +419,7 @@ namespace zip
                                          const std::string& file_comment) const;
 
         // 扩展字段解读
-        static const std::vector<std::vector<uint8_t>> &get_extra_field_list(const std::vector<uint8_t>& extra_field);
+        static std::vector<std::vector<uint8_t>> get_extra_field_list(const std::vector<uint8_t>& extra_field);
         struct StrongEncryptionHeader
         {
             // format = 2

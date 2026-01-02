@@ -6,11 +6,7 @@
 #include <iostream>
 #include <algorithm>
 
-SevenZipDevice::SevenZipDevice(const std::filesystem::path& path,
-                               SevenZipDevice::Mode mode,
-                               sevenzip::CompressionMethod compression,
-                               sevenzip::EncryptionMethod encryption,
-                               const std::vector<uint8_t>& password)
+SevenZipDevice::SevenZipDevice(const std::filesystem::path& path, const Mode mode, const CompressionMethod compression, const EncryptionMethod encryption, const std::vector<uint8_t>& password)
     : archive_path_(path), mode_(mode), compression_(compression), encryption_(encryption), password_(password)
 {
     // 初始化后端
@@ -55,12 +51,12 @@ void SevenZipDevice::set_password(const std::vector<uint8_t>& password)
     }
 }
 
-void SevenZipDevice::set_compression(sevenzip::CompressionMethod method)
+void SevenZipDevice::set_compression(const CompressionMethod method)
 {
     compression_ = method;
 }
 
-void SevenZipDevice::set_encryption(sevenzip::EncryptionMethod method)
+void SevenZipDevice::set_encryption(const EncryptionMethod method)
 {
     encryption_ = method;
 }
