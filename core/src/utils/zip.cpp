@@ -514,7 +514,7 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
     // ReSharper disable once CppDFAConstantConditions
     if (version_made_by == ZipVersionMadeBy::NTFS || version_made_by == ZipVersionMadeBy::MS_DOS)
     {
-        const auto ntfs_extra_field = ntfs_to_extra_field(
+        const auto ntfs_extra_field = ntfs2extra_field(
             time_point_to_ntfs_u64(meta.modification_time),
             time_point_to_ntfs_u64(meta.access_time),
             time_point_to_ntfs_u64(meta.creation_time)
@@ -524,7 +524,7 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
     // ReSharper disable once CppDFAConstantConditions
     else if (version_made_by == ZipVersionMadeBy::Unix)
     {
-        const auto unix_extra_field = unix_to_extra_field(
+        const auto unix_extra_field = unix2extra_field(
             time_point_to_unix_u32(meta.access_time),
             time_point_to_unix_u32(meta.modification_time),
             meta.uid,
@@ -606,38 +606,54 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
     encryption::ZipCrypto zip_crypto(password_);
     encryption::RC4 rc4_encryptor{};
 
-    if (encryption_method == ZipEncryptionMethod::ZipCrypto)
+    if (meta.type == FileEntityType::RegularFile)
     {
-        std::uniform_int_distribution<uint16_t> dist(0, 255);
-        // 避免二次写入,这里直接用 last_mod_time 字段写入头
-        for (int i=0; i<11; i++)
+        if (encryption_method == ZipEncryptionMethod::ZipCrypto)
         {
-            uint8_t bit = zip_crypto.encrypt(dist(rand));
-            ofs_->write(reinterpret_cast<const char*>(&bit), 1);
-        }
-        uint8_t last_bit = zip_crypto.encrypt((local_header.last_mod_time>>8) & 0xff);
-        ofs_->write(reinterpret_cast<const char*>(&last_bit), 1);
-        compressed_size += 12;
-    } else if (encryption_method == ZipEncryptionMethod::RC4)
-    {
-        std::vector rc4_pwd{password_};
-        if (rc4_pwd.size() < 32)
+            std::uniform_int_distribution<uint16_t> dist(0, 255);
+            // 避免二次写入,这里直接用 last_mod_time 字段写入头
+            for (int i=0; i<11; i++)
+            {
+                uint8_t bit = zip_crypto.encrypt(dist(rand));
+                ofs_->write(reinterpret_cast<const char*>(&bit), 1);
+            }
+            uint8_t last_bit = zip_crypto.encrypt((local_header.last_mod_time>>8) & 0xff);
+            ofs_->write(reinterpret_cast<const char*>(&last_bit), 1);
+            compressed_size += 12;
+        } else if (encryption_method == ZipEncryptionMethod::RC4)
         {
-            rc4_pwd.resize(32, 0);
-        } else if (rc4_pwd.size() > 448)
-        {
-            rc4_pwd.resize(448);
-        }
-        rc4_encryptor = encryption::RC4(rc4_pwd);
+            std::vector rc4_pwd{password_};
+            if (rc4_pwd.size() < 32)
+            {
+                rc4_pwd.resize(32, 0);
+            } else if (rc4_pwd.size() > 448)
+            {
+                rc4_pwd.resize(448);
+            }
+            rc4_encryptor = encryption::RC4(rc4_pwd);
+            auto tmp_rc4_encryptor = rc4_encryptor;
 
-        DecryptionHeaderRecord rc4_dec_header {
-            {},
-            3,
-            ZipEncryptionMethod::RC4,
-            rc4_encryptor.bit_len(),
-            1,
-            {}, {}, {}
-        };
+            DecryptionHeaderRecord rc4_dec_header {
+                {},
+                3,
+                ZipEncryptionMethod::RC4,
+                tmp_rc4_encryptor.bit_len(),
+                1,
+                {}, {}, std::vector<uint8_t>(16)
+            };
+            std::uniform_int_distribution<uint16_t> dist(0, 255);
+            crc::CRC32 tmp_crc32_inst;
+            for (unsigned char & i : rc4_dec_header.v_data)
+            {
+                uint8_t bit = (dist(rand));
+                tmp_crc32_inst.update(tmp_rc4_encryptor.encrypt(bit));
+                i = bit;
+            }
+            rc4_dec_header.v_crc32 = tmp_crc32_inst.finalize();
+            const auto rc4_header_bytes = make_decryption_header(rc4_dec_header);
+            ofs_->write(reinterpret_cast<const char*>(rc4_header_bytes.data()), static_cast<long long>(rc4_header_bytes.size()));
+            compressed_size += static_cast<uint32_t>(rc4_header_bytes.size());
+        }
     }
 
     // 使用ReadableFile的read(size)方法读取文件内容
@@ -719,7 +735,7 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
         compressed_size,
         static_cast<uint32_t>(meta.size),
         le16toh(local_header.file_name_length),
-        le16toh(local_header.extra_field_length),
+        le16toh(static_cast<uint16_t>(extra_field.size())),
         0,  // 暂时不写入文件注释
         0,  // 不使用分卷压缩
         // 内部文件属性
@@ -861,8 +877,9 @@ std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesys
     auto meta = sql_zip_entity2file_meta(entity);
     std::unique_ptr<ZipIstreamBuf> stream_buf = nullptr;
 
-    if (lfh.general_purpose & static_cast<uint16_t>(ZipGeneralPurposeBitFlag::Encrypted))
+    if ((lfh.general_purpose & static_cast<uint16_t>(ZipGeneralPurposeBitFlag::Encrypted)) && meta.size > 0)
     {
+        // ReSharper disable once CppDFAUnreachableCode
         do
         {
             auto encryption_method = ZipEncryptionMethod::Unknown;
@@ -932,13 +949,13 @@ std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesys
             else if (lfh.general_purpose & static_cast<uint16_t>(ZipGeneralPurposeBitFlag::StrongEncryption))
             {
                 // 设置了 StrongEncryption bit 后在文件前要插入一段 decryption header record 校验密码是否正确
-                const size_t de_header_offset = ifs_->tellg();
+                ifs_->seekg(static_cast<long long>(real_offset), std::ios::beg);
                 if (const auto de_header = get_decryption_header(*ifs_.get()); !de_header.format)
                 {
                     break;
                 } else
                 {
-                    const size_t de_header_size = static_cast<size_t>(ifs_->tellg()) - de_header_offset;
+                    const size_t raw_file_offset = static_cast<size_t>(ifs_->tellg());
                     if (encryption_method == ZipEncryptionMethod::Unknown)
                     {
                         encryption_method = de_header.alg_id;
@@ -950,7 +967,7 @@ std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesys
                     if (encryption_method == ZipEncryptionMethod::RC4)
                     {
                         std::vector rc4_pwd(password_);
-                        rc4_pwd.resize(de_header.bit_len);
+                        rc4_pwd.resize(de_header.bit_len, 0);
                         std::vector de_data(de_header.v_data);
                         encryption::RC4 rc4_decoder(rc4_pwd);
                         rc4_decoder.process(de_data.data(), de_data.size());
@@ -961,7 +978,8 @@ std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesys
                             invalid_password_ = true;
                             break;
                         }
-                        stream_buf = std::make_unique<RC4IstreamBuf>(*ifs_.get(), rc4_decoder, real_offset + de_header_size, meta.size);
+                        rc4_decoder = encryption::RC4(rc4_pwd);
+                        stream_buf = std::make_unique<RC4IstreamBuf>(*ifs_.get(), rc4_decoder, raw_file_offset, meta.size);
                     } else break;
                 }
             }
@@ -1094,7 +1112,7 @@ FileEntityMeta ZipFile::cdfh_to_file_meta(const CentralDirectoryEntry& cdfh)
             {
                 meta.type = FileEntityType::Directory;
             }
-            if (const auto [ntfs_field, ok] = extra_field_to_ntfs(field); ok)
+            if (const auto [ntfs_field, ok] = extra_field2ntfs(field); ok)
             {
                 meta.creation_time = ntfs_u64_to_time_point(ntfs_field.c_time);
                 meta.access_time = ntfs_u64_to_time_point(ntfs_field.a_time);
@@ -1116,7 +1134,7 @@ FileEntityMeta ZipFile::cdfh_to_file_meta(const CentralDirectoryEntry& cdfh)
 
         for (const auto& field: extra_fields)
         {
-            if (const auto [unix_field, ok] = extra_field_to_unix(field); ok)
+            if (const auto [unix_field, ok] = extra_field2unix(field); ok)
             {
                 meta.access_time = unix_u32_to_time_point(unix_field.a_time);
                 meta.modification_time = unix_u32_to_time_point(unix_field.m_time);
@@ -1155,7 +1173,7 @@ std::vector<std::vector<uint8_t>> ZipFile::get_extra_field_list(const std::vecto
 // | NTFS Sig (2 bytes) | Ext Len (2 bytes)  | Reserved (4 bytes) | Tag1 (2 bytes) | Size1 (2 bytes) | MTime (8 bytes) | ATime (8 bytes) | CTime (8 bytes) |
 // |--------------------|--------------------|--------------------|----------------|-----------------|-----------------|-----------------|-----------------|
 // | 0x000A             | Length Following   | 0x0000             | 0x0001         | 24              | ...             | ...             | ...             |
-std::pair<ZipFile::NTFSExtraField, bool> ZipFile::extra_field_to_ntfs(const std::vector<uint8_t>& extra_field)
+std::pair<ZipFile::NTFSExtraField, bool> ZipFile::extra_field2ntfs(const std::vector<uint8_t>& extra_field)
 {
     if (extra_field.size() < 4)
     {
@@ -1183,7 +1201,7 @@ std::pair<ZipFile::NTFSExtraField, bool> ZipFile::extra_field_to_ntfs(const std:
         true
     };
 }
-std::vector<uint8_t> ZipFile::ntfs_to_extra_field(const uint64_t m_time, const uint64_t a_time, const uint64_t c_time)
+std::vector<uint8_t> ZipFile::ntfs2extra_field(const uint64_t m_time, const uint64_t a_time, const uint64_t c_time)
 {
     std::vector<uint8_t> extra_field(36);
     *reinterpret_cast<uint16_t*>(&extra_field[0])  = htole16(0x000A);     // NTFS Signature
@@ -1200,7 +1218,7 @@ std::vector<uint8_t> ZipFile::ntfs_to_extra_field(const uint64_t m_time, const u
 // | Unix Sig (2 bytes) | Ext Len (2 bytes)  | ATime (4 bytes) | MTime (4 bytes) | UID (2 bytes) | GID (2 bytes) |
 // |--------------------|--------------------|-----------------|-----------------|---------------|---------------|
 // | 0x000D             | Length Following   | ...             | ...             | ...           |               |
-std::pair<ZipFile::UnixExtraField, bool> ZipFile::extra_field_to_unix(const std::vector<uint8_t>& extra_field)
+std::pair<ZipFile::UnixExtraField, bool> ZipFile::extra_field2unix(const std::vector<uint8_t>& extra_field)
 {
     if (extra_field.size() < 4)
     {
@@ -1227,7 +1245,7 @@ std::pair<ZipFile::UnixExtraField, bool> ZipFile::extra_field_to_unix(const std:
         true
     };
 }
-std::vector<uint8_t> ZipFile::unix_to_extra_field(const uint32_t a_time, const uint32_t m_time, const uint16_t uid, const uint16_t gid)
+std::vector<uint8_t> ZipFile::unix2extra_field(const uint32_t a_time, const uint32_t m_time, const uint16_t uid, const uint16_t gid)
 {
     std::vector<uint8_t> extra_field(16);
     *reinterpret_cast<uint16_t*>(&extra_field[0])  = htole16(0x000D);   // Unix Signature
@@ -1274,51 +1292,94 @@ ZipFile::StrongEncryptionHeader ZipFile::get_encryption_method(const std::vector
 ZipFile::DecryptionHeaderRecord
 ZipFile::get_decryption_header(std::istream& is)
 {
-#define SAFE_READ(param) \
+#define SAFE_READ16(param) \
     is.read(reinterpret_cast<char*>(&(param)), sizeof(param)); \
+    param = le16toh(param); \
+    if (is.gcount() != sizeof(param)) return {};
+#define SAFE_READ32(param) \
+    is.read(reinterpret_cast<char*>(&(param)), sizeof(param)); \
+    param = le32toh(param); \
     if (is.gcount() != sizeof(param)) return {};
 
     uint16_t u16_cache;
     uint32_t u32_cache, length;
     DecryptionHeaderRecord decryption_header;
-    SAFE_READ(u16_cache);
+    SAFE_READ16(u16_cache);
     decryption_header.iv_data.resize(u16_cache);
     is.read(reinterpret_cast<char*>(decryption_header.iv_data.data()), u16_cache);
     if (is.gcount() != u16_cache) return {};
     is.read(reinterpret_cast<char*>(&length), sizeof(length));
     if (is.gcount() != sizeof(length) || length < 20) return {};
-    SAFE_READ(decryption_header.format);
+    SAFE_READ16(decryption_header.format);
     length -= 2;
-    SAFE_READ(decryption_header.alg_id);
+    SAFE_READ16(decryption_header.alg_id);
     length -= 2;
-    SAFE_READ(decryption_header.bit_len);
+    SAFE_READ16(decryption_header.bit_len);
     length -= 2;
-    SAFE_READ(decryption_header.flags);
+    SAFE_READ16(decryption_header.flags);
     length -= 2;
 
-    SAFE_READ(u16_cache);
+    SAFE_READ16(u16_cache);
     length -= 2;
     if (length < u16_cache + 4 + 2 + 4) return {};
     decryption_header.erd_data.resize(u16_cache);
     is.read(reinterpret_cast<char*>(decryption_header.erd_data.data()), u16_cache);
     if (is.gcount() != u16_cache) return {};
     length -= u16_cache;
-    SAFE_READ(u32_cache);
+    SAFE_READ32(u32_cache);
     length -= 4;
     if (length < u32_cache + 2 + 4) return {};
     decryption_header.reserved.resize(u32_cache);
     is.read(reinterpret_cast<char*>(decryption_header.reserved.data()), u32_cache);
     if (is.gcount() != u32_cache) return {};
     length -= u32_cache;
-    SAFE_READ(u16_cache);
+    SAFE_READ16(u16_cache);
     length -= 2;
     if (length < u16_cache) return {};
     decryption_header.v_data.resize(u16_cache-4);
-    is.read(reinterpret_cast<char*>(decryption_header.v_data.data()), u16_cache-4);
-    if (is.gcount() != u16_cache) return {};
-    length -= u16_cache;
-    SAFE_READ(decryption_header.v_crc32);
+    is.read(reinterpret_cast<char*>(decryption_header.v_data.data()), u16_cache - 4);
+    if (is.gcount() != u16_cache - 4) return {};
+    length -= u16_cache - 4;
+    SAFE_READ32(decryption_header.v_crc32);
 
-#undef SAFE_READ
+#undef SAFE_READ16
+#undef SAFE_READ32
     return decryption_header;
+}
+
+std::vector<uint8_t> ZipFile::make_decryption_header(const DecryptionHeaderRecord& dhr)
+{
+    const size_t total_size = 2 + dhr.iv_data.size() + 4 + 2 + 2 + 2 + 2
+                              + 2 + dhr.erd_data.size() + 4 + dhr.reserved.size()
+                              + 2 + dhr.v_data.size() + 4;
+    std::vector<uint8_t> header(total_size);
+    size_t offset = 0;
+    *reinterpret_cast<uint16_t*>(&header[offset]) = htole16(static_cast<uint16_t>(dhr.iv_data.size()));
+    offset += 2;
+    std::copy(dhr.iv_data.begin(), dhr.iv_data.end(), header.begin() + offset);
+    offset += dhr.iv_data.size();
+    *reinterpret_cast<uint32_t*>(&header[offset]) = htole32(static_cast<uint32_t>(total_size - offset - 4));
+    offset += 4;
+    *reinterpret_cast<uint16_t*>(&header[offset]) = htole16(dhr.format);
+    offset += 2;
+    *reinterpret_cast<uint16_t*>(&header[offset]) = htole16(static_cast<uint16_t>(dhr.alg_id));
+    offset += 2;
+    *reinterpret_cast<uint16_t*>(&header[offset]) = htole16(dhr.bit_len);
+    offset += 2;
+    *reinterpret_cast<uint16_t*>(&header[offset]) = htole16(dhr.flags);
+    offset += 2;
+    *reinterpret_cast<uint16_t*>(&header[offset]) = htole16(static_cast<uint16_t>(dhr.erd_data.size()));
+    offset += 2;
+    std::copy(dhr.erd_data.begin(), dhr.erd_data.end(), header.begin() + offset);
+    offset += dhr.erd_data.size();
+    *reinterpret_cast<uint32_t*>(&header[offset]) = htole32(static_cast<uint32_t>(dhr.reserved.size()));
+    offset += 4;
+    std::copy(dhr.reserved.begin(), dhr.reserved.end(), header.begin() + offset);
+    offset += dhr.reserved.size();
+    *reinterpret_cast<uint16_t*>(&header[offset]) = htole16(static_cast<uint16_t>(dhr.v_data.size() + 4));
+    offset += 2;
+    std::copy(dhr.v_data.begin(), dhr.v_data.end(), header.begin() + offset);
+    offset += dhr.v_data.size();
+    *reinterpret_cast<uint32_t*>(&header[offset]) = htole32(dhr.v_crc32);
+    return header;
 }

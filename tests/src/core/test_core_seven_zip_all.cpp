@@ -182,7 +182,7 @@ TEST_F(TestSystemDevice, TestBackupFromPhysicalTo7z)
 }
 
 // 4) 使用项目根目录 test_data 进行端到端备份与恢复（目标目录必须为空）
-TEST(CoreSevenZipDevice, BackupAndRestoreWithTestData)
+TEST_F(TestSystemDevice, BackupAndRestoreWithTestData)
 {
     if (!has_7z_cli()) {
         GTEST_SKIP() << "7z/7za 不在 PATH 中，跳过 BackupAndRestoreWithTestData";
@@ -193,7 +193,7 @@ TEST(CoreSevenZipDevice, BackupAndRestoreWithTestData)
 #else
     const fs::path project_root = fs::current_path();
 #endif
-    const fs::path source_dir = project_root / "test_data" / "source";
+    const fs::path source_dir = root / test_folder;
     ASSERT_TRUE(fs::exists(source_dir)) << "source_dir not found: " << source_dir.string();
 
     // 目标恢复目录：确保为空
@@ -237,21 +237,45 @@ TEST(CoreSevenZipDevice, BackupAndRestoreWithTestData)
             const auto rel = fs::relative(it->path(), a);
             const auto bp = b / rel;
             if (it->is_directory()) {
-                if (!fs::exists(bp) || !fs::is_directory(bp)) return false;
+                if (fs::exists(bp) && !fs::is_directory(bp))
+                {
+                    GTEST_LOG_(WARNING) << "Restore: not a directory: " << rel << "\n";
+                    return false;
+                }
             } else if (it->is_regular_file()) {
-                if (!fs::exists(bp) || !fs::is_regular_file(bp)) return false;
-                if (fs::file_size(it->path()) != fs::file_size(bp)) return false;
+                if (!fs::exists(bp) || !fs::is_regular_file(bp))
+                {
+                    GTEST_LOG_(WARNING) << "Restore: not a regular file: " << rel << "\n";
+                    return false;
+                }
+                if (fs::file_size(it->path()) != fs::file_size(bp))
+                {
+                    GTEST_LOG_(WARNING) << "Restore: file size mismatch: " << rel << "\n";
+                    return false;
+                }
                 // 简单内容比对：读取两侧并逐字节比较
                 std::ifstream fa(it->path(), std::ios::binary);
                 std::ifstream fb(bp, std::ios::binary);
-                if (!fa.is_open() || !fb.is_open()) return false;
+                if (!fa.is_open() || !fb.is_open())
+                {
+                    GTEST_LOG_(WARNING) << "Restore: failed to open files for comparison: " << rel << "\n";
+                    return false;
+                }
                 constexpr size_t BUFSZ = 8192;
                 std::vector<char> ba(BUFSZ), bb(BUFSZ);
                 while (fa && fb) {
                     fa.read(ba.data(), BUFSZ); fb.read(bb.data(), BUFSZ);
                     const auto na = fa.gcount(); const auto nb = fb.gcount();
-                    if (na != nb) return false;
-                    if (std::memcmp(ba.data(), bb.data(), static_cast<size_t>(na)) != 0) return false;
+                    if (na != nb)
+                    {
+                        GTEST_LOG_(WARNING) << "Restore: read size mismatch during comparison: " << rel << "\n";
+                        return false;
+                    }
+                    if (std::memcmp(ba.data(), bb.data(), static_cast<size_t>(na)) != 0)
+                    {
+                        GTEST_LOG_(WARNING) << "Restore: file content mismatch: " << rel << "\n";
+                        return false;
+                    }
                 }
             }
         }

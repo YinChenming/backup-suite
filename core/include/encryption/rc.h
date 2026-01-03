@@ -22,6 +22,21 @@ namespace encryption
         // 1. KSA：密钥调度算法，初始化 S 盒
         explicit RC4(const std::vector<uint8_t>& key);
         RC4() = default;
+        RC4(const RC4& other)
+        {
+            memcpy_s(S, 256, other.S, 256);
+            i_ = other.i_;
+            j_ = other.j_;
+            bit_length_ = other.bit_length_;
+        }
+        const RC4 &operator=(const RC4& other)
+        {
+            memcpy_s(S, 256, other.S, 256);
+            i_ = other.i_;
+            j_ = other.j_;
+            bit_length_ = other.bit_length_;
+            return *this;
+        }
 
         // 2. PRGA：伪随机生成算法，加密/解密一个字节
         uint8_t process_byte(uint8_t input);

@@ -80,7 +80,7 @@ protected:
 public:
     virtual ~FileEntity() = default;
     FileEntity() = default;
-    explicit FileEntity(FileEntityMeta  metaData): meta(std::move(metaData)) {}
+    explicit FileEntity(FileEntityMeta metaData): meta(std::move(metaData)) {}
     FileEntityMeta& get_meta() { return meta; }
 };
 

@@ -6,6 +6,8 @@
 
 #include "filesystem/system_device.h"
 
+#include "utils/admin_privilege.h"
+
 using namespace utils::time_converter;
 
 #ifdef _WIN32
@@ -42,12 +44,12 @@ std::unique_ptr<Folder> WindowsDevice::get_folder(const std::filesystem::path& p
             else
             {
                 if (const auto file_meta = get_meta(path / ffd.cFileName); file_meta != nullptr)
-                    children.emplace_back(Folder{*file_meta, {}});
+                    children.emplace_back(Folder{std::move(*file_meta), {}});
             }
         } else
         {
             if (const auto file_meta = get_meta(path / ffd.cFileName))
-                children.emplace_back(File{*file_meta});
+                children.emplace_back(File{std::move(*file_meta)});
         }
     }
 
@@ -317,10 +319,6 @@ bool WindowsDevice::_write_file(ReadableFile &file, const bool force)
     if (exists(realpath) && !force) {
         return false;
     }
-    if (meta.type == FileEntityType::SymbolicLink)
-    {
-        throw std::runtime_error("Creating symbolic links is not supported now.");
-    }
     // 确保父目录存在，避免在未创建目录时写入文件失败
     try {
         if (!meta.path.empty()) {
@@ -328,6 +326,20 @@ bool WindowsDevice::_write_file(ReadableFile &file, const bool force)
         }
     } catch ([[maybe_unused]] const std::exception& e) {
         return false;
+    }
+    if (meta.type == FileEntityType::SymbolicLink)
+    {
+        if (!is_running_as_admin()) return true;
+        DWORD flags = 0;
+        if (std::filesystem::is_directory(meta.path)) {
+            flags |= SYMBOLIC_LINK_FLAG_DIRECTORY;
+        }
+        if (CreateSymbolicLinkW(meta.path.c_str(), meta.symbolic_link_target.c_str(), flags)) {
+            return set_file_attributes(meta);
+        } else {
+            DWORD error = GetLastError();
+            return false;
+        }
     }
     std::ofstream ofs(realpath, std::ios::out | std::ios::binary | std::ios::trunc);
     if (!ofs.is_open()) {
@@ -348,11 +360,7 @@ bool WindowsDevice::_write_file(ReadableFile &file, const bool force)
     ofs.close();
 
     // 尝试设置文件属性，但如果失败不影响恢复操作的成功
-    if (set_file_attributes(meta))
-    {
-        // ignore result
-    }
-    return true;
+    return set_file_attributes(meta) || !is_running_as_admin();
 }
 
 bool WindowsDevice::write_folder(Folder &folder)
@@ -377,7 +385,7 @@ bool WindowsDevice::write_folder(Folder &folder)
     }
     if (!std::filesystem::create_directories(realpath))
         return false;
-    return set_file_attributes(meta);
+    return set_file_attributes(meta) || !is_running_as_admin();
 }
 
 bool WindowsDevice::set_file_attributes(const FileEntityMeta& meta)
@@ -387,7 +395,9 @@ bool WindowsDevice::set_file_attributes(const FileEntityMeta& meta)
         return false;
 
     if (meta.type == FileEntityType::SymbolicLink)
-        throw std::runtime_error("Setting attributes for symbolic links is not supported now.");    // TODO: 恢复符号链接
+    {
+        if (!is_running_as_admin()) return true;
+    }
 
     // set file times
     auto chrono2ft = [](const std::chrono::system_clock::time_point &tp) -> FILETIME {
@@ -410,7 +420,8 @@ bool WindowsDevice::set_file_attributes(const FileEntityMeta& meta)
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr,
         OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, // FILE_FLAG_BACKUP_SEMANTICS 允许打开目录
+        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS | // FILE_FLAG_BACKUP_SEMANTICS 允许打开目录
+        FILE_FLAG_OPEN_REPARSE_POINT,  // 允许打开符号链接本身而不是目标
         nullptr
     );
     if (hFile == INVALID_HANDLE_VALUE)

@@ -114,7 +114,7 @@ TEST_F(TestSystemDevice, TestZipEncDevice)
         // 首先创建一个zip备份文件
         {
             ZipDevice zip_device(tmp_zip_file->path(), ZipDevice::Mode::WriteOnly, password);
-            zip_device.set_encryption_method(zip::header::ZipEncryptionMethod::ZipCrypto);
+            zip_device.set_encryption_method(enc_method);
             BackupController controller{};
             controller.run_backup(device, zip_device);
         }
@@ -122,7 +122,7 @@ TEST_F(TestSystemDevice, TestZipEncDevice)
         // 现在测试只读ZipDevice
         {
             ZipDevice read_zip_device(tmp_zip_file->path(), ZipDevice::Mode::ReadOnly, password);
-            read_zip_device.set_encryption_method(zip::header::ZipEncryptionMethod::ZipCrypto);
+            read_zip_device.set_encryption_method(enc_method);
             EXPECT_TRUE(read_zip_device.is_open());
 
             // 测试获取文件 - 使用正确的路径
@@ -247,17 +247,21 @@ TEST_F(TestSystemDevice, TestBackupControllerPhysicalToTar)
     const auto tmp_tar_file = TmpFile::create();
     GTEST_LOG_(INFO) << "TestBackupControllerPhysicalToTar tmp tar path: " << tmp_tar_file->path() << "\n";
     // 使用BackupController从物理设备备份到TarDevice
-    TarDevice tar_device(tmp_tar_file->path(), TarDevice::Mode::WriteOnly);
-    BackupController controller{};
-    controller.run_backup(device, tar_device);
+    {
+        TarDevice tar_device(tmp_tar_file->path(), TarDevice::Mode::WriteOnly);
+        BackupController controller{};
+        controller.run_backup(device, tar_device);
+    }
 
     // 验证备份结果
-    TarDevice read_tar_device(tmp_tar_file->path(), TarDevice::Mode::ReadOnly);
-    EXPECT_TRUE(read_tar_device.is_open());
+    {
+        TarDevice read_tar_device(tmp_tar_file->path(), TarDevice::Mode::ReadOnly);
+        EXPECT_TRUE(read_tar_device.is_open());
 
-    // 检查文件是否存在
-    EXPECT_TRUE(read_tar_device.exists(test_folder / "test_file.txt"));
-    EXPECT_TRUE(read_tar_device.exists(test_folder));
+        // 检查文件是否存在
+        EXPECT_TRUE(read_tar_device.exists(test_folder / "test_file.txt"));
+        EXPECT_TRUE(read_tar_device.exists(test_folder));
+    }
 }
 TEST_F(TestSystemDevice, TestBackupControllerPhysicalToZip)
 {

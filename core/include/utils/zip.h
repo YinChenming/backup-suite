@@ -446,19 +446,20 @@ namespace zip
             uint32_t v_crc32=0;
         };
         static DecryptionHeaderRecord get_decryption_header(std::istream& is);
+        static std::vector<uint8_t> make_decryption_header(const DecryptionHeaderRecord& dhr);
         struct NTFSExtraField
         {
             uint64_t m_time, a_time, c_time;
         };
-        static std::pair<NTFSExtraField, bool> extra_field_to_ntfs(const std::vector<uint8_t>& extra_field);
-        static std::vector<uint8_t> ntfs_to_extra_field(uint64_t m_time=0, uint64_t a_time=0, uint64_t c_time=0);
+        static std::pair<NTFSExtraField, bool> extra_field2ntfs(const std::vector<uint8_t>& extra_field);
+        static std::vector<uint8_t> ntfs2extra_field(uint64_t m_time=0, uint64_t a_time=0, uint64_t c_time=0);
         struct UnixExtraField
         {
             uint32_t a_time, m_time;
             uint16_t uid, gid;
         };
-        static std::pair<UnixExtraField, bool> extra_field_to_unix(const std::vector<uint8_t>& extra_field);
-        static std::vector<uint8_t> unix_to_extra_field(uint32_t a_time=0, uint32_t m_time=0, uint16_t uid=0, uint16_t gid=0);
+        static std::pair<UnixExtraField, bool> extra_field2unix(const std::vector<uint8_t>& extra_field);
+        static std::vector<uint8_t> unix2extra_field(uint32_t a_time=0, uint32_t m_time=0, uint16_t uid=0, uint16_t gid=0);
     };
 } // namespace zip
 

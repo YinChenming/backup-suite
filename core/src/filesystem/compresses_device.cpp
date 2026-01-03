@@ -54,13 +54,19 @@ std::unique_ptr<Folder> TarDevice::get_folder(const std::filesystem::path& path)
         root_meta.type = FileEntityType::Directory;
         return std::make_unique<Folder>(root_meta, children);
     }
-    const auto fstream = tar_file_.get_file_stream(path);
+    std::filesystem::path real_path = path;
+    if (path.generic_u8string().back() != '/')
+    {
+        // 强制添加目录结尾的斜杠
+        real_path += '/';
+    }
+    const auto fstream = tar_file_.get_file_stream(real_path);
     if (fstream == nullptr) return nullptr;
     FileEntityMeta meta = fstream->get_meta();
-    auto files = tar_file_.list_dir(path);
+    auto files = tar_file_.list_dir(real_path);
     std::vector<FileEntity> children;
     for (auto &[entity, offset] : files) {
-        if (path == entity.path)
+        if (real_path == entity.path)
         {
             continue;
         }
@@ -94,7 +100,14 @@ std::unique_ptr<FileEntityMeta> TarDevice::get_meta(const std::filesystem::path&
         return std::make_unique<FileEntityMeta>(stream->get_meta());
     } else
     {
-        return nullptr;
+        if (path.generic_u8string().back() == '/')
+            return nullptr;
+        // 尝试作为目录获取
+        std::filesystem::path dir_path = path;
+        dir_path += '/';
+        const auto dir_stream = tar_file_.get_file_stream(dir_path);
+        if (dir_stream == nullptr) return nullptr;
+        return std::make_unique<FileEntityMeta>(dir_stream->get_meta());
     }
 }
 bool TarDevice::exists(const std::filesystem::path& path)
@@ -202,9 +215,16 @@ std::unique_ptr<FileEntityMeta> ZipDevice::get_meta(const std::filesystem::path&
         return nullptr;
     }
 
-    auto stream = zip_file_.get_file_stream(path);
-    if (stream == nullptr) return nullptr;
-    else return std::make_unique<FileEntityMeta>(stream->get_meta());
+    const auto stream = zip_file_.get_file_stream(path);
+    if (stream != nullptr) return std::make_unique<FileEntityMeta>(stream->get_meta());
+    if (path.generic_u8string().back() == '/')
+        return nullptr;
+    // 尝试作为目录获取
+    std::filesystem::path dir_path = path;
+    dir_path += '/';
+    const auto dir_stream = zip_file_.get_file_stream(dir_path);
+    if (dir_stream == nullptr) return nullptr;
+    return std::make_unique<FileEntityMeta>(dir_stream->get_meta());
 }
 bool ZipDevice::exists(const std::filesystem::path& path)
 {

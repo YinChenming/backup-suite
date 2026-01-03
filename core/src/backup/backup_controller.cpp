@@ -6,6 +6,16 @@
 #include <regex>
 #include <algorithm>
 
+#include "utils/admin_privilege.h"
+
+BackupController::BackupController(const BackupConfig& cfg): config(cfg)
+{
+    if (!is_running_as_admin())
+    {
+        config.backup_file_types = config.backup_file_types & ~(FileEntityType::SymbolicLink);
+    }
+}
+
 void BackupController::run_backup(Device& from, Device& to) const
 {
     std::queue<std::unique_ptr<Folder>> queue;
@@ -125,9 +135,7 @@ bool BackupController::copy_folder_recursive(Device& from, Device& to, const std
 bool BackupController::should_backup_file(const FileEntityMeta& meta) const
 {
     // 使用正斜杠进行路径匹配（跨平台）
-    std::string path_str = meta.path.string();
-    // 将反斜杠转换为正斜杠，便于统一的路径匹配
-    std::replace(path_str.begin(), path_str.end(), '\\', '/');
+    std::string path_str = meta.path.generic_u8string();
 
     // 1. 检查路径包含模式
     if (!config.include_patterns.empty()) {
