@@ -17,6 +17,14 @@ set(CORE_TEST_SOURCE
         src/core/test_core_seven_zip_all.cpp
 )
 
+set(ENABLE_7Z_TESTS ${BACKUPSUITE_ENABLE_7Z_TESTS})
+find_program(SEVENZ_CLI NAMES 7z 7za
+        HINTS ${CMAKE_SOURCE_DIR}/third_party/7-Zip ${CMAKE_SOURCE_DIR}/third_party/7-Zip/bin ${CMAKE_SOURCE_DIR}/third_party/7zip ${CMAKE_SOURCE_DIR}/third_party/7zip/bin)
+if (ENABLE_7Z_TESTS AND NOT SEVENZ_CLI)
+    message(STATUS "7z/7za not found; disabling seven_zip tests")
+    set(ENABLE_7Z_TESTS OFF)
+endif ()
+
 add_executable(core_tests
         main.cpp
         ${CORE_TEST_SOURCE}
@@ -61,28 +69,19 @@ include(GoogleTest)
 # Run test discovery with working directory where shared DLLs are present so discovery executable can load dependencies
 gtest_discover_tests(core_tests WORKING_DIRECTORY ${BIN_ROOT})
 
-# Ensure core DLL and a copy of the test exe are available in tests runtime dir
-if (TARGET backup_suite_core)
-    add_custom_command(TARGET core_tests POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E echo "Copying core_tests.exe and backup_suite_core DLL to ${BIN_TESTS_DIR}"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:core_tests> ${BIN_TESTS_DIR}
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:backup_suite_core> ${BIN_TESTS_DIR}
-    )
-endif ()
-
 # 定义可执行文件
 # Placeholder app: off by default and excluded from ALL_BUILD
-option(BUILD_PLACEHOLDER_MYPROJECT "Build placeholder MyProject target" OFF)
+option(BUILD_PLACEHOLDER_MYPROJECT "Build placeholder core_tests target" OFF)
 if (BUILD_PLACEHOLDER_MYPROJECT)
-    add_executable(MyProject EXCLUDE_FROM_ALL main.cpp)
-    target_link_libraries(MyProject PRIVATE GTest::gtest GTest::gtest_main)
-    target_include_directories(MyProject PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_executable(core_tests EXCLUDE_FROM_ALL main.cpp)
+    target_link_libraries(core_tests PRIVATE GTest::gtest GTest::gtest_main)
+    target_include_directories(core_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 endif ()
 
-if (WIN32 AND BUILD_PLACEHOLDER_MYPROJECT AND TARGET MyProject)
+if (WIN32 AND BUILD_PLACEHOLDER_MYPROJECT AND TARGET core_tests)
     if (MSVC)
         # MSVC 方案：直接通过连接器参数设置
-        set_target_properties(MyProject PROPERTIES
+        set_target_properties(core_tests PROPERTIES
                 LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\""
         )
     elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
@@ -107,6 +106,14 @@ if (WIN32 AND BUILD_PLACEHOLDER_MYPROJECT AND TARGET MyProject)
         file(WRITE ${RC_FILE} "1 24 \"${MANIFEST_FILE}\"")
 
         # 3. 将资源文件加入编译列表
-        target_sources(MyProject PRIVATE ${RC_FILE})
+        target_sources(core_tests PRIVATE ${RC_FILE})
     endif ()
+endif ()
+
+# Ensure core DLL and a copy of the test exe are available in tests runtime dir
+if (TARGET backup_suite_core)
+    add_custom_command(TARGET core_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E echo "Copying core_tests.exe and backup_suite_core DLL to ${BIN_TESTS_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:core_tests> ${BIN_TESTS_DIR}
+    )
 endif ()

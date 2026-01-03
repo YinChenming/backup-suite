@@ -97,6 +97,12 @@ cmake --build --preset vs-debug
 
 许可证提示：p7zip/7‑Zip 包含 LGPL/GPL 组件，请根据使用方式（尤其是静态/动态链接）遵守相应条款并在发布时附带必要的 LICENSE/NOTICE 信息。
 
+#### 4. 打包发布
+
+```powershell
+cmake --build --preset vs-release --target package
+```
+
 ### 编译要点（Windows/MSVC）
 
 - 依赖：CMake ≥ 3.20，MSVC 2022，vcpkg（用于 gtest、sqlite3、libarchive；7‑Zip 源码不通过 vcpkg）

@@ -1,0 +1,4 @@
+# CLI-only CPack config
+include("${CPACK_OUTPUT_CONFIG_FILE}")
+set(CPACK_COMPONENTS_ALL core;cli;common)
+
