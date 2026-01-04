@@ -30,6 +30,8 @@ jobs:
       uses: lukka/run-vcpkg@v11
       with:
         vcpkgGitCommitId: '1d611efb49276c65d69fb6d010c2aaaf039322b0'
+      env:
+        VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'
 
     - name: Configure with CMake Preset
       run: cmake --preset vs-release
