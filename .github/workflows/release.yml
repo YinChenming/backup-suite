@@ -1,0 +1,78 @@
+name: Release Build
+
+on: 
+  push: 
+    tags:
+      - 'v*'  # 当推送以v开头的tag时触发，例如 v1.0.0
+
+jobs:
+  build-and-release: 
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup MSVC
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: 'master'
+        
+    - name: Configure with CMake Preset
+      run: cmake --preset vs-release
+      env:
+        VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
+      
+    - name: Build with CMake Preset
+      run: cmake --build --preset vs-release --config Release
+      
+    - name: Package CLI
+      run: cmake --build cmake-build-release-visual-studio --target package_cli --config Release
+        
+    - name: Extract version from tag
+      id: version
+      run: |
+        $tag = "${{ github.ref_name }}"
+        $version = $tag -replace '^v', ''
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+        echo "Extracted version: $version"
+        
+    - name: Verify packaged files exist
+      run: |
+        $version = "${{ steps.version.outputs.VERSION }}"
+        $zipFile = "cmake-build-release-visual-studio/BackupSuite-${version}-win64-CLI.zip"
+        $exeFile = "cmake-build-release-visual-studio/BackupSuite-${version}-win64-CLI.exe"
+        
+        Write-Host "Checking for packaged files:"
+        Write-Host "  ZIP: $zipFile"
+        Write-Host "  EXE: $exeFile"
+        
+        if (Test-Path $zipFile) {
+            Write-Host "✓ ZIP file found"
+        } else {
+            Write-Host "✗ ZIP file not found"
+            Get-ChildItem -Path cmake-build-release-visual-studio -Filter "*.zip"
+        }
+        
+        if (Test-Path $exeFile) {
+            Write-Host "✓ EXE file found"
+        } else {
+            Write-Host "✗ EXE file not found"
+            Get-ChildItem -Path cmake-build-release-visual-studio -Filter "*.exe"
+        }
+        
+    - name: Create Release and Upload Assets
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ github.ref_name }}
+        name: Release ${{ github.ref_name }}
+        draft: false
+        prerelease: false
+        files: |
+          cmake-build-release-visual-studio/BackupSuite-${{ steps.version.outputs.VERSION }}-win64-CLI.zip
+          cmake-build-release-visual-studio/BackupSuite-${{ steps.version.outputs.VERSION }}-win64-CLI.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
