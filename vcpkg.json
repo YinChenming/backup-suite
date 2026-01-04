@@ -11,6 +11,14 @@
     },
     {
       "name": "libarchive"
+    },
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "features": [
+        "gui",
+        "widgets"
+      ]
     }
   ]
 }
