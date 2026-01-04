@@ -39,10 +39,11 @@ jobs:
         VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
 
     - name: Build with CMake Preset
+      working-directory: ${{ github.workspace }}/cmake-build-release-visual-studio
       run: cmake --build --preset vs-release --config Release
 
     - name: Package CLI
-      run: cmake --build cmake-build-release-visual-studio --target package_cli --config Release
+      run: cpack -G "NSIS;ZIP" -C Release --config CPackConfigCLI.cmake
 
     - name: Extract version from tag
       id: version
