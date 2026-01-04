@@ -5,10 +5,11 @@
 #include <filesystem>
 #include <regex>
 #include <algorithm>
+#include <utility>
 
 #include "utils/admin_privilege.h"
 
-BackupController::BackupController(const BackupConfig& cfg): config(cfg)
+BackupController::BackupController(BackupConfig cfg): config(std::move(cfg))
 {
     if (!is_running_as_admin())
     {

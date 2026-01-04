@@ -613,7 +613,6 @@ int main(int argc, char* argv[]) {
                             std::cerr << "Error: Cannot open ZIP file: " << options.source_path << std::endl;
                             return 1;
                         }
-
                     // 如果需要密码但没有提供，提示用户输入
                     if (temp_device.is_invalid_password()) {
                         if (options.password.empty()) {
@@ -641,6 +640,11 @@ int main(int argc, char* argv[]) {
 
                 bool success = controller.run_restore(source_device, target_device);
                 source_device.close();
+                if (source_device.is_invalid_password())
+                {
+                    std::cout << "Error: Incorrect password provided" << std::endl;
+                    return 1;
+                }
 
                 if (success) {
                     if (options.verbose) {

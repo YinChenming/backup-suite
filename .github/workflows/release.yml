@@ -50,12 +50,15 @@ jobs:
       run: cmake --preset vs-release
       env:
         VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
+        BACKUPSUITE_VERSION: ${{ steps.version.outputs.VERSION }} # 传入版本
 
     - name: Build with CMake Preset
       run: cmake --build --preset vs-release --config Release
 
     - name: Package
       run: cmake --build --preset vs-release --target package --config Release
+      env:
+        BACKUPSUITE_VERSION: ${{ steps.version.outputs.VERSION }} # 传入版本
 
     - name: Extract version from tag
       id: version

@@ -37,31 +37,6 @@ TEST(TestSqlite3, TestOpenDatabase)
     sqlite3_close(db);
 }
 
-TEST(TestTar, TestOpenTar)
-{
-    const std::filesystem::path raw_tar_path = R"(C:\Users\ycm\Desktop\New Folder\tar\gnu.tar)";
-    tar::TarFile tar(raw_tar_path, tar::TarFile::input);
-    auto results = tar.list_dir(".");
-    GTEST_LOG_(INFO) << "Tar standard: " << (tar.get_standard() == tar::TarStandard::GNU ? "GNU" : tar.get_standard() == tar::TarStandard::POSIX_2001_PAX ? "POSIX 2001 PAX" : "UNKNOWN") << "\n"
-    << "Tar list_dir: " << results.size() << "\n";
-    for (auto &[meta, offset] : results)
-    {
-        print_meta(meta, GTEST_LOG_(INFO) << "Offset: " << offset << "\n");
-    }
-}
-
-TEST(TestZip, TestOpenZip)
-{
-    const std::filesystem::path raw_tar_path = R"(C:\Users\ycm\Desktop\New Folder\tar\zip.zip)";
-    zip::ZipFile zip(raw_tar_path, zip::ZipFile::input);
-    auto results = zip.list_dir(".");
-    GTEST_LOG_(INFO) << "Tar list_dir: " << results.size() << "\n";
-    for (auto &meta : results)
-    {
-        print_meta(zip::ZipFile::cdfh_to_file_meta(meta), GTEST_LOG_(INFO));
-    }
-}
-
 // 简单的测试文件实现，用于测试压缩功能
 class TestFile : public ReadableFile {
 public:

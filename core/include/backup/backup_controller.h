@@ -55,13 +55,13 @@ class BACKUP_SUITE_API BackupController
 public:
     BackupController() = default;
     // ReSharper disable once CppNonExplicitConvertingConstructor
-    BackupController(const BackupConfig& cfg);
+    explicit BackupController(BackupConfig cfg);
     void run_backup(Device& from, Device& to) const;
-    bool run_restore(Device& from, Device& to) const;
+    [[nodiscard]] bool run_restore(Device& from, Device& to) const;
 private:
-    bool copy_folder_recursive(Device& from, Device& to, const std::filesystem::path& path) const;
-    bool should_backup_file(const FileEntityMeta& meta) const;  // 检查文件是否应该备份
-    bool match_pattern(const std::string& path, const std::string& pattern) const;  // 路径模式匹配
+    [[nodiscard]] bool copy_folder_recursive(Device& from, Device& to, const std::filesystem::path& path) const;
+    [[nodiscard]] bool should_backup_file(const FileEntityMeta& meta) const;  // 检查文件是否应该备份
+    [[nodiscard]] bool match_pattern(const std::string& path, const std::string& pattern) const;  // 路径模式匹配
 };
 
 #endif // BACKUPSUITE_BACKUP_CONTROLLER_H

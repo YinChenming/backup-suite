@@ -620,6 +620,7 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
             uint8_t last_bit = zip_crypto.encrypt((local_header.last_mod_time>>8) & 0xff);
             ofs_->write(reinterpret_cast<const char*>(&last_bit), 1);
             compressed_size += 12;
+            zip_crypto = encryption::ZipCrypto(password_);
         } else if (encryption_method == ZipEncryptionMethod::RC4)
         {
             std::vector rc4_pwd{password_};
@@ -631,7 +632,7 @@ bool ZipFile::add_entity(ReadableFile& file, ZipCompressionMethod compression_me
                 rc4_pwd.resize(448);
             }
             rc4_encryptor = encryption::RC4(rc4_pwd);
-            auto tmp_rc4_encryptor = rc4_encryptor;
+            encryption::RC4 tmp_rc4_encryptor {rc4_pwd};
 
             DecryptionHeaderRecord rc4_dec_header {
                 {},
@@ -939,6 +940,7 @@ std::unique_ptr<ZipFile::ZipIstream> ZipFile::get_file_stream(const std::filesys
                 // 使用 last_mod_time 的高16位二次判断
                 if (static_cast<uint8_t>((lfh.last_mod_time >> 8) & 0xFF) == zip_crypto_header[11])
                 {
+                    decoder = encryption::ZipCrypto{password_};
                     stream_buf = std::make_unique<ZipCryptoIstreamBuf>(*ifs_.get(), decoder, real_offset + 12, meta.size);  // meta.size 使用的是 uncompression_size
                 } else
                 {
