@@ -42,7 +42,6 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
-        vcpkgGitCommitId: '1d611efb49276c65d69fb6d010c2aaaf039322b0'
         doNotCache: false
       env:
         VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'
