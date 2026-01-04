@@ -20,16 +20,31 @@ jobs:
     - name: Setup Qt
       uses: jurplel/install-qt-action@v4
       with:
-        version: '6.8.4'
+        version: '6.8.3'
         host: 'windows'
         target: 'desktop'
         arch: 'win64_msvc2022_64'
         cache: true
 
+    - name: Install NSIS
+      run: choco install nsis -y
+        
+    - name: Cache vcpkg executable and toolchain
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.VCPKG_ROOT }}
+          !${{ env.VCPKG_ROOT }}/buildtrees
+          !${{ env.VCPKG_ROOT }}/packages
+          !${{ env.VCPKG_ROOT }}/downloads
+        key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json') }}
+        
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
-        vcpkgGitCommitId: '1d611efb49276c65d69fb6d010c2aaaf039322b0'
+        doNotCache: false
+      env:
+        VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'
 
     - name: Configure with CMake Preset
       run: cmake --preset vs-release
@@ -39,8 +54,8 @@ jobs:
     - name: Build with CMake Preset
       run: cmake --build --preset vs-release --config Release
 
-    - name: Package CLI
-      run: cmake --build cmake-build-release-visual-studio --target package_cli --config Release
+    - name: Package
+      run: cmake --build --preset vs-release --target package --config Release
 
     - name: Extract version from tag
       id: version
