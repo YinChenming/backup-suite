@@ -10,6 +10,10 @@ jobs:
   build-and-release:
     runs-on: windows-latest
 
+    permissions:
+      contents: write  # 必须，用于创建 Release 和上传文件
+      packages: write
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

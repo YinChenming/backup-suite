@@ -155,6 +155,7 @@ public:
         }
     }
     ~IstreamBuf() override = default;
+    virtual void process_buffer(char* buffer, size_t size) { }
     int_type underflow() override
     {
         if (gptr() < egptr())
@@ -163,13 +164,11 @@ public:
         }
         file_.seekg(offset_, std::ios::beg);
         const size_t to_read = std::min(buffer_size_, size_);
-        if (!file_.read(buffer_, to_read))
-        {
-            return traits_type::eof();
-        }
+        file_.read(buffer_, to_read);
         offset_ += to_read;
         size_ -= to_read;
-        if (to_read == 0 || file_.eof() || file_.gcount() != static_cast<std::streamsize>(to_read))
+        process_buffer(buffer_, to_read);
+        if (to_read == 0 || file_.fail() || file_.bad() || file_.gcount() != static_cast<std::streamsize>(to_read))
         {
             return traits_type::eof();
         }

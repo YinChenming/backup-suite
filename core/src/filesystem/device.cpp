@@ -33,7 +33,8 @@ std::unique_ptr<std::vector<std::byte>> PhysicalDeviceReadableFile::read(size_t 
     size = std::min(size, meta.size);
     auto buffer = std::make_unique<std::vector<std::byte>>(size);
     stream->read(reinterpret_cast<char*>(buffer->data()), size);
-    if (stream->gcount() != static_cast<std::streamsize>(size))
-        return nullptr;
+    const auto real_read_bytes = stream->gcount();
+    if (real_read_bytes <= 0) return nullptr;
+    buffer->resize(real_read_bytes);
     return buffer;
 }

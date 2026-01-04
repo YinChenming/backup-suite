@@ -277,23 +277,30 @@ namespace zip
         public:
             StreamEncryptorIstreamBuf(std::ifstream& ifs, T encryptor, int offset, size_t size) : IstreamBuf(ifs, offset, size), encryptor_(encryptor)
             { }
-            int_type underflow() override
+            void process_buffer(char* buffer, size_t size) override
             {
-                if (const auto result = IstreamBuf::underflow(); result == traits_type::eof()) {
-                    return result;
+                for (size_t i = 0; i < size; i++)
+                {
+                    buffer[i] = encryptor_.decrypt(buffer[i]);
                 }
-
-                // 获取当前基类 buffer 的范围
-                const char* start = gptr();
-                const char* end = egptr();
-                size_t len = end - start;
-
-                // 3. 原地解密当前 buffer 中的剩余数据
-                for (char* p = gptr(); p < end; ++p) {
-                    *p = static_cast<char>(encryptor_.decrypt(static_cast<uint8_t>(*p)));
-                }
-                return traits_type::to_int_type(*gptr());
             }
+            // int_type underflow() override
+            // {
+            //     if (const auto result = IstreamBuf::underflow(); result == traits_type::eof()) {
+            //         return result;
+            //     }
+            //
+            //     // 获取当前基类 buffer 的范围
+            //     const char* start = gptr();
+            //     const char* end = egptr();
+            //     size_t len = end - start;
+            //
+            //     // 3. 原地解密当前 buffer 中的剩余数据
+            //     for (char* p = gptr(); p < end; ++p) {
+            //         *p = static_cast<char>(encryptor_.decrypt(static_cast<uint8_t>(*p)));
+            //     }
+            //     return traits_type::to_int_type(*gptr());
+            // }
         };
         using ZipCryptoIstreamBuf = StreamEncryptorIstreamBuf<encryption::ZipCrypto>;
         using RC4IstreamBuf = StreamEncryptorIstreamBuf<encryption::RC4>;
