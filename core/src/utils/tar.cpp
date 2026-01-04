@@ -171,11 +171,20 @@ void TarFile::init_db_from_tar()
                     // ReSharper disable once CppDFAUnreachableCode
                     auto name_size = meta.size;
                     TarBlock name_buffer{};
-                    while (name_size > 0 && ifs_->read(name_buffer.block, sizeof(name_buffer)))
+                    while (ifs_->read(name_buffer.block, sizeof(name_buffer)))
                     {
+                        const auto delta_offset = ifs_->gcount();
+                        if (delta_offset != sizeof(name_buffer))
+                        {
+                            is_valid_ = false;
+                            return;
+                        }
                         current_offset += sizeof(name_buffer);
-                        long_name.append(name_buffer.block, ifs_->gcount());
-                        name_size -= ifs_->gcount();
+                        long_name.append(name_buffer.block);
+                        if (delta_offset >= name_size)
+                        {
+                            break;
+                        }
                     }
                     previous_special_block = true;
                     continue;
@@ -259,7 +268,20 @@ bool TarFile::insert_entity(const FileEntityMeta& meta, const int offset) const
     const auto stmt = db_.create_statement("INSERT INTO entity (" + db::TarInitializationStrategy::SQLEntityColumns + ") "
     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);");
     int i = 1;
-    sqlite3_bind_text(stmt.get(), i++, reinterpret_cast<const char*>(meta.path.generic_u8string().c_str()), -1, SQLITE_TRANSIENT);
+    if (meta.type == FileEntityType::Directory)
+    {
+        if (auto path_str = meta.path.generic_u8string(); !path_str.empty() && path_str.back() != '/')
+        {
+            path_str += '/';
+            sqlite3_bind_text(stmt.get(), i++, reinterpret_cast<const char*>(path_str.c_str()), -1, SQLITE_TRANSIENT);
+        } else
+        {
+            sqlite3_bind_text(stmt.get(), i++, reinterpret_cast<const char*>(meta.path.generic_u8string().c_str()), -1, SQLITE_TRANSIENT);
+        }
+    } else
+    {
+        sqlite3_bind_text(stmt.get(), i++, reinterpret_cast<const char*>(meta.path.generic_u8string().c_str()), -1, SQLITE_TRANSIENT);
+    }
     sqlite3_bind_int(stmt.get(), i++, static_cast<int>(meta.type));
     sqlite3_bind_int64(stmt.get(), i++, static_cast<sqlite3_int64>(meta.size));
     sqlite3_bind_int(stmt.get(), i++, offset);
@@ -420,7 +442,7 @@ bool TarFile::add_entity(ReadableFile& file)
     {
         // Create GNU long filename entry
         TarFileHeader long_name_header{};
-        std::string long_name_entry_path = "\"" + full_path + "\"";
+        const std::string& long_name_entry_path = full_path;
 
         // Write long filename header
         // The name field is set to "././@LongLink" for GNU long filename entries

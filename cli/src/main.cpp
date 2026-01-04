@@ -25,13 +25,6 @@
 #undef max
 #endif
 
-#if defined _MSC_VER && defined _DEBUG
-// enable CRT debug heap for memory leak detection
-#define _CRTDBG_MAP_ALLOC
-#include <cstdlib>
-#include <crtdbg.h>
-#endif
-
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [options] <source_path> <target_path>" << std::endl;
     std::cout << std::endl;
@@ -48,7 +41,7 @@ void print_usage(const char* program_name) {
     std::cout << std::endl;
     std::cout << "Format-specific Options:" << std::endl;
     std::cout << "  --tar-format FORMAT   TAR format: 'pax' or 'gnu' (default: pax)" << std::endl;
-    std::cout << "  --zip-encryption TYPE ZIP encryption: 'zipcrypto' or 'aes' (default: zipcrypto)" << std::endl;
+    std::cout << "  --zip-encryption TYPE ZIP encryption: 'zipcrypto' or 'rc4' (default: zipcrypto)" << std::endl;
     std::cout << std::endl;
     std::cout << "Filter Options (Backup mode only):" << std::endl;
     std::cout << "  --include PATTERN     Include files matching pattern (can be used multiple times)" << std::endl;
@@ -239,11 +232,11 @@ bool parse_arguments(const int argc, char* argv[], CLIOptions& options) {
                 if (encryption == "zipcrypto" || encryption == "rc4") {
                     options.zip_encryption = encryption;
                 } else {
-                    std::cerr << "Error: --zip-encryption must be 'zipcrypto' or 'aes'" << std::endl;
+                    std::cerr << "Error: --zip-encryption must be 'zipcrypto' or 'rc4'" << std::endl;
                     return false;
                 }
             } else {
-                std::cerr << "Error: --zip-encryption requires a type (zipcrypto or aes)" << std::endl;
+                std::cerr << "Error: --zip-encryption requires a type (zipcrypto or rc4)" << std::endl;
                 return false;
             }
         } else if (arg[0] != '-') {
@@ -397,31 +390,16 @@ BackupConfig build_backup_config(const CLIOptions& options) {
 }
 
 int main(int argc, char* argv[]) {
-#if defined (_MSC_VER) && defined (_DEBUG)
-    // Dump memory leaks
-    _CrtSetDbgFlag ( _CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF );
-    _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_DEBUG);
-    _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);
-    _CrtSetBreakAlloc(294);
-    _CrtSetBreakAlloc(278);
-    _CrtSetBreakAlloc(181);
-    _CrtSetBreakAlloc(165);
-    printf("Enable CRT debug heap for memory leak detection.\n");
-#define REPORT _CrtDumpMemoryLeaks();
-#else
-#define REPORT
-#endif
-
     CLIOptions options;
 
     // Parse command line arguments
-    if (!parse_arguments(argc, argv, options)) {REPORT
+    if (!parse_arguments(argc, argv, options)) {
         return 1; // Return 1 for help requests, otherwise return error code
     }
 
     // Validate options
     if (!validate_options(options)) {
-        print_usage(argv[0]);REPORT
+        print_usage(argv[0]);
         return 1;
     }
 
@@ -484,7 +462,7 @@ int main(int argc, char* argv[]) {
 
             // Check if source path exists
             if (!std::filesystem::exists(options.source_path)) {
-                std::cerr << "Error: Source path does not exist: " << options.source_path << std::endl;REPORT
+                std::cerr << "Error: Source path does not exist: " << options.source_path << std::endl;
                 return 1;
             }
 
@@ -495,7 +473,7 @@ int main(int argc, char* argv[]) {
             if (options.use_tar) {
                 TarDevice target_device(options.target_path, TarDevice::Mode::WriteOnly);
                 if (!target_device.is_open()) {
-                    std::cerr << "Error: Cannot create TAR file: " << options.target_path << std::endl;REPORT
+                    std::cerr << "Error: Cannot create TAR file: " << options.target_path << std::endl;
                     return 1;
                 }
 
@@ -527,7 +505,7 @@ int main(int argc, char* argv[]) {
 
                 ZipDevice target_device(options.target_path, ZipDevice::Mode::WriteOnly, password_vec);
                 if (!target_device.is_open()) {
-                    std::cerr << "Error: Cannot create ZIP file: " << options.target_path << std::endl;REPORT
+                    std::cerr << "Error: Cannot create ZIP file: " << options.target_path << std::endl;
                     return 1;
                 }
 
@@ -567,7 +545,7 @@ int main(int argc, char* argv[]) {
                                              options.use_encryption ? sevenzip::EncryptionMethod::AES256 : sevenzip::EncryptionMethod::None,
                                              password_vec);
                 if (!target_device.is_open()) {
-                    std::cerr << "Error: Cannot create 7Z file: " << options.target_path << std::endl;REPORT
+                    std::cerr << "Error: Cannot create 7Z file: " << options.target_path << std::endl;
                     return 1;
                 }
 
@@ -596,7 +574,7 @@ int main(int argc, char* argv[]) {
                 std::error_code ec;
                 std::filesystem::create_directories(options.target_path, ec);
                 if (ec) {
-                    std::cerr << "Error: failed to create target directory: " << options.target_path << " : " << ec.message() << std::endl;REPORT
+                    std::cerr << "Error: failed to create target directory: " << options.target_path << " : " << ec.message() << std::endl;
                     return 1;
                 }
             }
@@ -607,7 +585,7 @@ int main(int argc, char* argv[]) {
             if (options.use_tar) {
                 TarDevice source_device(options.source_path, TarDevice::Mode::ReadOnly);
                 if (!source_device.is_open()) {
-                    std::cerr << "Error: fail to open TAR file: " << options.source_path << std::endl;REPORT
+                    std::cerr << "Error: fail to open TAR file: " << options.source_path << std::endl;
                     return 1;
                 }
 
@@ -623,16 +601,16 @@ int main(int argc, char* argv[]) {
                         std::cout << "Success!" << std::endl;
                     }
                 } else {
-                    std::cerr << "Error: restore failed" << std::endl;REPORT
+                    std::cerr << "Error: restore failed" << std::endl;
                     return 1;
                 }
             } else if (options.use_zip) {
                 // 检查ZIP文件是否需要密码
-                std::vector<uint8_t> password_vec;
+                std::vector<uint8_t> password_vec{options.password.begin(), options.password.end()};
                 {
                     ZipDevice temp_device(options.source_path, ZipDevice::Mode::ReadOnly);
                         if (!temp_device.is_open()) {
-                            std::cerr << "Error: Cannot open ZIP file: " << options.source_path << std::endl;REPORT
+                            std::cerr << "Error: Cannot open ZIP file: " << options.source_path << std::endl;
                             return 1;
                         }
 
@@ -640,11 +618,10 @@ int main(int argc, char* argv[]) {
                     if (temp_device.is_invalid_password()) {
                         if (options.password.empty()) {
                             if (!prompt_for_password(options.password)) {
-                                std::cerr << "Error: No password provided" << std::endl;REPORT
+                                std::cerr << "Error: No password provided" << std::endl;
                                 return 1;
                             }
                         }
-                        password_vec.assign(options.password.begin(), options.password.end());
                     }
                 }
 
@@ -654,7 +631,7 @@ int main(int argc, char* argv[]) {
                         std::cerr << "Error: Incorrect password or no password provided" << std::endl;
                     } else {
                         std::cerr << "Error: Cannot open ZIP file: " << options.source_path << std::endl;
-                    }REPORT
+                    }
                     return 1;
                 }
 
@@ -670,7 +647,7 @@ int main(int argc, char* argv[]) {
                         std::cout << "Restore completed!" << std::endl;
                     }
                 } else {
-                    std::cerr << "Error: Restore operation failed" << std::endl;REPORT
+                    std::cerr << "Error: Restore operation failed" << std::endl;
                     return 1;
                 }
             } else if (options.use_7z) {
@@ -684,7 +661,7 @@ int main(int argc, char* argv[]) {
                     if (!temp_device.is_open()) {
                         // File might need a password, prompt for it
                         if (!prompt_for_password(options.password)) {
-                            std::cerr << "Error: No password provided" << std::endl;REPORT
+                            std::cerr << "Error: No password provided" << std::endl;
                             return 1;
                         }
                         password_vec.assign(options.password.begin(), options.password.end());
@@ -700,7 +677,7 @@ int main(int argc, char* argv[]) {
                         std::cerr << "Error: Incorrect password or no password provided" << std::endl;
                     } else {
                         std::cerr << "Error: Cannot open 7Z file: " << options.source_path << std::endl;
-                    }REPORT
+                    }
                     return 1;
                 }
 
@@ -716,17 +693,17 @@ int main(int argc, char* argv[]) {
                         std::cout << "Restore completed!" << std::endl;
                     }
                 } else {
-                    std::cerr << "Error: Restore operation failed" << std::endl;REPORT
+                    std::cerr << "Error: Restore operation failed" << std::endl;
                     return 1;
                 }
             }
             }
 
-        std::cout << "Operation completed successfully!" << std::endl;REPORT
+        std::cout << "Operation completed successfully!" << std::endl;
         return 0;
 
     } catch (const std::exception& e) {
-        std::cerr << "Exception: " << e.what() << std::endl;REPORT
+        std::cerr << "Exception: " << e.what() << std::endl;
         return 1;
     }
 }

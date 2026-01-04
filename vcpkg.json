@@ -1,7 +1,7 @@
 {
   "name": "backup-suite",
   "version": "1.0.0",
-  "builtin-baseline": "1d611efb49276c65d69fb6d010c2aaaf039322b0",
+  "builtin-baseline": "b1b19307e2d2ec1eefbdb7ea069de7d4bcd31f01",
   "dependencies": [
     {
       "name": "gtest"
