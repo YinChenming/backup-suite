@@ -43,8 +43,8 @@ jobs:
     - name: Verify packaged files exist
       run: |
         $version = "${{ steps.version.outputs.VERSION }}"
-        $zipFile = "cmake-build-release-visual-studio/BackupSuite-${version}-win64-CLI.zip"
-        $exeFile = "cmake-build-release-visual-studio/BackupSuite-${version}-win64-CLI.exe"
+        $zipFile = "cmake-build-release-visual-studio/BackupSuite-${version}-win64.zip"
+        $exeFile = "cmake-build-release-visual-studio/BackupSuite-${version}-win64.exe"
         
         Write-Host "Checking for packaged files:"
         Write-Host "  ZIP: $zipFile"
@@ -72,7 +72,7 @@ jobs:
         draft: false
         prerelease: false
         files: |
-          cmake-build-release-visual-studio/BackupSuite-${{ steps.version.outputs.VERSION }}-win64-CLI.zip
-          cmake-build-release-visual-studio/BackupSuite-${{ steps.version.outputs.VERSION }}-win64-CLI.exe
+          cmake-build-release-visual-studio/BackupSuite-${{ steps.version.outputs.VERSION }}-win64.zip
+          cmake-build-release-visual-studio/BackupSuite-${{ steps.version.outputs.VERSION }}-win64.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
