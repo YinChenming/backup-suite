@@ -44,7 +44,7 @@ jobs:
       run: cmake --build --preset vs-release --config Release
 
     - name: Package
-      run: cmake --build cmake-build-release-visual-studio --target package --config Release
+      run: cmake --build --preset vs-release --target package --config Release
 
     - name: Extract version from tag
       id: version
