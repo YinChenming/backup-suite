@@ -18,8 +18,6 @@ jobs:
       
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
-      with:
-        vcpkgGitCommitId: 'master'
         
     - name: Configure with CMake Preset
       run: cmake --preset vs-release
