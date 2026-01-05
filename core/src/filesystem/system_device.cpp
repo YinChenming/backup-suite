@@ -316,7 +316,7 @@ bool WindowsDevice::_write_file(ReadableFile &file, const bool force)
 {
     const auto meta = file.get_meta();
     const auto realpath = root / meta.path;
-    if (exists(realpath) && !force) {
+    if (exists(meta.path) && !force) {
         return false;
     }
     // 确保父目录存在，避免在未创建目录时写入文件失败
@@ -341,23 +341,25 @@ bool WindowsDevice::_write_file(ReadableFile &file, const bool force)
             return false;
         }
     }
-    std::ofstream ofs(realpath, std::ios::out | std::ios::binary | std::ios::trunc);
-    if (!ofs.is_open()) {
-        return false;
-    }
-    std::unique_ptr<std::vector<std::byte>> data = file.read(CACHE_SIZE);
-    while (data && !data->empty())
-    {
-        if (!ofs.is_open() || !ofs.good())
-        {
-            ofs.close();
+    if (meta.type == FileEntityType::RegularFile && !(std::filesystem::exists(realpath) && (meta.windows_attributes & FILE_ATTRIBUTE_READONLY))) {
+        std::ofstream ofs(realpath, std::ios::out | std::ios::binary | std::ios::trunc);
+        if (!ofs.is_open()) {
             return false;
         }
-        ofs.write(reinterpret_cast<const char*>(data->data()), data->size());
-        data = file.read(CACHE_SIZE);
+        std::unique_ptr<std::vector<std::byte>> data = file.read(CACHE_SIZE);
+        while (data && !data->empty())
+        {
+            if (!ofs.is_open() || !ofs.good())
+            {
+                ofs.close();
+                return false;
+            }
+            ofs.write(reinterpret_cast<const char*>(data->data()), data->size());
+            data = file.read(CACHE_SIZE);
+        }
+        ofs.flush();
+        ofs.close();
     }
-    ofs.flush();
-    ofs.close();
 
     // 尝试设置文件属性，但如果失败不影响恢复操作的成功
     return set_file_attributes(meta) || !is_running_as_admin();
@@ -391,7 +393,7 @@ bool WindowsDevice::write_folder(Folder &folder)
 bool WindowsDevice::set_file_attributes(const FileEntityMeta& meta)
 {
     const auto realpath = root / meta.path;
-    if (!exists(realpath))
+    if (!exists(meta.path))
         return false;
 
     if (meta.type == FileEntityType::SymbolicLink)
